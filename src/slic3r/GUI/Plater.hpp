@@ -252,6 +252,10 @@ public:
     void suppress_background_process(const bool stop_background_process) ;
     void send_gcode();
     void send_gcode_inner(DynamicPrintConfig* physical_printer_config);
+    // Show G-code generated outside of slicing (a calibration pattern) in the preview. Export G-code and Send to printer
+    // act on it until the plate or the configuration changes. filename is the default name for the export / upload.
+    void load_external_gcode(const std::string &gcode, const std::string &filename);
+    bool has_external_gcode() const;
 	void eject_drive();
 
     std::optional<PrintHostJob> get_connect_print_host_job(bool multiple_beds);
@@ -472,6 +476,8 @@ private:
     std::optional<fs_path> get_multiple_output_dir(const std::string &start_dir);
 
     void export_gcode_to_path(const fs_path &output_path, const std::function<void(bool)> &export_callback);
+    void export_external_gcode(bool prefer_removable);
+    void send_external_gcode();
     void reslice_until_step_inner(int step, const ModelObject &object, bool postpone_error_messages);
 
     struct priv;

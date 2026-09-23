@@ -941,7 +941,8 @@ void Preview::load_print_as_fff(bool keep_z_range)
             }
     }
 
-    if (wxGetApp().is_editor() && !has_layers) {
+    // G-code generated outside of slicing (a calibration pattern) is shown without any sliced layers.
+    if (wxGetApp().is_editor() && !has_layers && !wxGetApp().plater()->has_external_gcode()) {
         m_canvas->reset_gcode_toolpaths();
         m_canvas->reset_gcode_layers_times_cache();
         m_canvas->load_gcode_shells();

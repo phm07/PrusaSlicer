@@ -64,6 +64,7 @@
 #include "GalleryDialog.hpp"
 #include "NotificationManager.hpp"
 #include "Preferences.hpp"
+#include "PressureAdvanceDialog.hpp"
 #include "WebViewPanel.hpp"
 #include "UserAccount.hpp"
 
@@ -1141,6 +1142,9 @@ bool MainFrame::can_export_gcode() const
     if (m_plater == nullptr)
         return false;
 
+    if (m_plater->has_external_gcode())
+        return true;
+
     if (m_plater->model().objects.empty())
         return false;
 
@@ -1154,7 +1158,7 @@ bool MainFrame::can_export_gcode() const
 
 bool MainFrame::can_send_gcode() const
 {
-    if (m_plater && ! m_plater->model().objects.empty())
+    if (m_plater && (m_plater->has_external_gcode() || ! m_plater->model().objects.empty()))
         if (const DynamicPrintConfig *cfg = wxGetApp().preset_bundle->physical_printers.get_selected_printer_config(); cfg)
             if (const auto *print_host_opt = cfg->option<ConfigOptionString>("print_host"); print_host_opt)
                 return ! print_host_opt->value.empty();
@@ -1166,7 +1170,7 @@ bool MainFrame::can_export_gcode_sd() const
 	if (m_plater == nullptr)
 		return false;
 
-	if (m_plater->model().objects.empty())
+	if (m_plater->model().objects.empty() && ! m_plater->has_external_gcode())
 		return false;
 
 	if (m_plater->is_export_gcode_scheduled())
@@ -1743,6 +1747,19 @@ void MainFrame::init_menubar_as_editor()
 #endif // __APPLE__
     }
 
+    // Calibration menu
+    wxMenu* calibrationMenu = nullptr;
+    if (m_plater) {
+        calibrationMenu = new wxMenu();
+        append_menu_item(calibrationMenu, wxID_ANY, _L("&Pressure Advance") + dots, _L("Generate a pressure advance calibration pattern for the active presets"),
+            [this](wxCommandEvent&) {
+                PressureAdvanceDialog dlg(this);
+                if (dlg.ShowModal() == wxID_OK)
+                    m_plater->load_external_gcode(dlg.gcode(), dlg.filename());
+            }, "", nullptr,
+            [this]() { return m_plater->printer_technology() == ptFFF; }, this);
+    }
+
     // Help menu
     auto helpMenu = generate_help_menu();
 
@@ -1776,6 +1793,7 @@ void MainFrame::init_menubar_as_editor()
     if (editMenu) m_menubar->Append(editMenu, _L("&Edit"));
     m_menubar->Append(windowMenu, _L("&Window"));
     if (viewMenu) m_menubar->Append(viewMenu, _L("&View"));
+    if (calibrationMenu) m_menubar->Append(calibrationMenu, _L("C&alibration"));
     // Add additional menus from C++
     m_menubar->Append(wxGetApp().get_config_menu(this), _L("&Configuration"));
     m_menubar->Append(helpMenu, _L("&Help"));

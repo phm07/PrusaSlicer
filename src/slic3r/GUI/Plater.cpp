@@ -37,6 +37,7 @@
 #include <boost/filesystem/fstream.hpp> // IWYU pragma: keep
 #include <boost/filesystem/path.hpp>
 #include <boost/filesystem/operations.hpp>
+#include <boost/nowide/fstream.hpp>
 #include <boost/log/trivial.hpp>
 #include <boost/nowide/convert.hpp>
 #include <boost/property_tree/ptree.hpp>
@@ -327,6 +328,16 @@ struct Plater::priv
     PrinterTechnology           printer_technology = ptFFF;
     std::vector<Slic3r::GCodeProcessorResult> gcode_results;
     std::unique_ptr<sla::WorkflowManager> workflow_manager;
+
+    // G-code generated outside of slicing (a calibration pattern), shown in the preview of the active bed instead of
+    // the sliced G-code. Export and send act on it until the plate or the configuration changes.
+    struct ExternalGCode {
+        boost::filesystem::path path;
+        std::string             filename;
+    };
+    std::optional<ExternalGCode> external_gcode;
+    // Delete the external G-code and return to showing the sliced G-code.
+    void clear_external_gcode();
 
     // GUI elements
     wxSizer* panel_sizer{ nullptr };
@@ -1210,6 +1221,10 @@ void Plater::priv::init()
 
 Plater::priv::~priv()
 {
+    if (external_gcode) {
+        boost::system::error_code ec;
+        boost::filesystem::remove(external_gcode->path, ec);
+    }
     if (config != nullptr)
         delete config;
     // Saves the database of visited (already shown) hints into hints.ini.
@@ -2072,10 +2087,25 @@ void Plater::priv::object_list_changed()
     }
 
     sidebar->enable_buttons(
+        external_gcode.has_value() || (
         s_multiple_beds.is_bed_occupied(s_multiple_beds.get_active_bed())
         && !export_in_progress
-        && is_sliceable(s_print_statuses[s_multiple_beds.get_active_bed()])
+        && is_sliceable(s_print_statuses[s_multiple_beds.get_active_bed()]))
     );
+}
+
+void Plater::priv::clear_external_gcode()
+{
+    if (! external_gcode)
+        return;
+    boost::system::error_code ec;
+    boost::filesystem::remove(external_gcode->path, ec);
+    external_gcode.reset();
+    gcode_results[s_multiple_beds.get_active_bed()].reset();
+    q->reset_gcode_toolpaths();
+    if (preview != nullptr)
+        preview->reload_print();
+    object_list_changed();
 }
 
 void Plater::priv::select_all()
@@ -2419,6 +2449,9 @@ void Plater::priv::regenerate_thumbnails(SimpleEvent&) {
 unsigned int Plater::priv::update_background_process(bool force_validation, bool postpone_error_messages)
 {
 //    assert(! s_beds_just_switched || background_process.idle());
+
+    // Any change of the plate or of the configuration invalidates the external G-code.
+    clear_external_gcode();
 
     int active_bed = s_multiple_beds.get_active_bed();
     background_process.set_temp_output_path(active_bed);
@@ -5968,8 +6001,86 @@ std::optional<fs::path> Plater::get_multiple_output_dir(const std::string &start
     return output_path;
 }
 
+void Plater::load_external_gcode(const std::string &gcode, const std::string &filename)
+{
+    p->clear_external_gcode();
+    // Switch to the preview first, switching the panel may restart the background processing.
+    p->select_view_3D("Preview");
+    // Stop the background processing, it would overwrite the G-code preview.
+    p->background_process.stop();
+
+    const boost::filesystem::path path = boost::filesystem::temp_directory_path()
+        / boost::filesystem::unique_path("." SLIC3R_APP_KEY ".external.%%%%-%%%%-%%%%-%%%%.gcode");
+    {
+        boost::nowide::ofstream file(path.string(), std::ios::binary);
+        file << gcode;
+        file.close();
+        if (file.fail()) {
+            show_error(this, GUI::format(_L("Failed to write the temporary file %1%."), path.string()));
+            return;
+        }
+    }
+
+    GCodeProcessor processor;
+    try {
+        wxBusyCursor wait;
+        processor.process_file(path.string());
+    } catch (const std::exception &ex) {
+        boost::system::error_code ec;
+        boost::filesystem::remove(path, ec);
+        show_error(this, ex.what());
+        return;
+    }
+    p->gcode_results[s_multiple_beds.get_active_bed()] = processor.extract_result();
+    p->external_gcode = priv::ExternalGCode{ path, filename };
+
+    p->sidebar->show_sliced_info_sizer(false);
+    p->preview->reload_print();
+    p->preview->get_canvas3d()->zoom_to_gcode();
+    p->object_list_changed();
+    p->show_action_buttons(false);
+    // Uploading to Prusa Connect without a physical printer requires a sliced print.
+    if (p->sidebar->show_connect(false))
+        p->sidebar->Layout();
+    p->notification_manager->push_notification(
+        GUI::format(_L("%1% is shown in the preview. Export it or send it to the printer using the buttons in the sidebar."), filename));
+}
+
+bool Plater::has_external_gcode() const
+{
+    return p->external_gcode.has_value();
+}
+
+void Plater::export_external_gcode(bool prefer_removable)
+{
+    assert(p->external_gcode);
+    const fs::path    default_output_file{ p->external_gcode->filename };
+    const std::string start_dir{ get_output_start_dir(prefer_removable, default_output_file) };
+    const auto        optional_output_path{ get_output_path(start_dir, default_output_file) };
+    if (! optional_output_path)
+        return;
+    const fs::path &output_path{ *optional_output_path };
+
+    export_gcode_to_path(output_path, [this, &output_path](const bool path_on_removable_media) {
+        std::string error_message;
+        if (copy_file(p->external_gcode->path.string(), output_path.string(), error_message, path_on_removable_media) != SUCCESS) {
+            p->exporting_status = ExportingStatus::NOT_EXPORTING;
+            p->notification_manager->close_notification_of_type(NotificationType::ExportOngoing);
+            show_error(this, GUI::format(_L("Failed to export the G-code to %1%: %2%"), output_path.string(), error_message));
+            return;
+        }
+        p->notification_manager->push_exporting_finished_notification(output_path.string(), output_path.parent_path().string(), path_on_removable_media);
+        p->exporting_status = ExportingStatus::NOT_EXPORTING;
+    });
+}
+
 void Plater::export_gcode(bool prefer_removable)
 {
+    if (p->external_gcode) {
+        export_external_gcode(prefer_removable);
+        return;
+    }
+
     if (p->model.objects.empty())
         return;
 
@@ -6786,12 +6897,12 @@ void Plater::connect_gcode_all() {
     }
 }
 
-void Plater::send_gcode()
+// Config of the selected physical printer with the stored credentials loaded, nullptr if no physical printer is selected.
+static DynamicPrintConfig* selected_physical_printer_config()
 {
-    // if physical_printer is selected, send gcode for this printer
     DynamicPrintConfig* physical_printer_config = wxGetApp().preset_bundle->physical_printers.get_selected_printer_config();
-    if (! physical_printer_config || p->model.objects.empty())
-        return;
+    if (! physical_printer_config)
+        return nullptr;
 
     // Passwords and API keys
     // "stored" indicates data are stored secretly, load them from store.
@@ -6820,7 +6931,83 @@ void Plater::send_gcode()
             physical_printer_config->opt_string("printhost_apikey") = std::string();
     }
     */
-    send_gcode_inner(physical_printer_config);
+    return physical_printer_config;
+}
+
+void Plater::send_gcode()
+{
+    if (p->external_gcode) {
+        send_external_gcode();
+        return;
+    }
+    // if physical_printer is selected, send gcode for this printer
+    if (p->model.objects.empty())
+        return;
+    if (DynamicPrintConfig* physical_printer_config = selected_physical_printer_config(); physical_printer_config)
+        send_gcode_inner(physical_printer_config);
+}
+
+void Plater::send_external_gcode()
+{
+    assert(p->external_gcode);
+    DynamicPrintConfig* physical_printer_config = selected_physical_printer_config();
+    if (! physical_printer_config)
+        return;
+    PrintHostJob upload_job(physical_printer_config);
+    if (upload_job.empty())
+        return;
+
+    // Repetier specific: Query the server for the list of file groups.
+    wxArrayString groups;
+    {
+        wxBusyCursor wait;
+        upload_job.printhost->get_groups(groups);
+    }
+    // PrusaLink specific: Query the server for the list of file groups.
+    wxArrayString storage_paths;
+    wxArrayString storage_names;
+    {
+        wxBusyCursor wait;
+        try {
+            upload_job.printhost->get_storage(storage_paths, storage_names);
+        } catch (const Slic3r::IOError& ex) {
+            show_error(this, ex.what(), false);
+            return;
+        }
+    }
+
+    PrintHostSendDialog dlg(fs::path(p->external_gcode->filename), upload_job.printhost->get_post_upload_actions(), groups, storage_paths, storage_names);
+    if (dlg.ShowModal() != wxID_OK)
+        return;
+
+    const std::string ext = boost::algorithm::to_lower_copy(dlg.filename().extension().string());
+    if (const wxString error_str = check_binary_vs_ascii_gcode_extension(ptFFF, ext, false); ! error_str.IsEmpty()) {
+        ErrorDialog(this, error_str, false).ShowModal();
+        return;
+    }
+
+    upload_job.upload_data.upload_path = dlg.filename();
+    upload_job.upload_data.post_action = dlg.post_action();
+    upload_job.upload_data.group       = dlg.group();
+    upload_job.upload_data.storage     = dlg.storage();
+
+    // Show "Is printer clean" dialog for PrusaConnect - Upload and print.
+    if (std::string(upload_job.printhost->get_name()) == "PrusaConnect" && upload_job.upload_data.post_action == PrintHostPostUploadAction::StartPrint) {
+        GUI::MessageDialog dlg(nullptr, _L("Is the printer ready? Is the print sheet in place, empty and clean?"), _L("Upload and Print"), wxOK | wxCANCEL);
+        if (dlg.ShowModal() != wxID_OK)
+            return;
+    }
+
+    // The upload queue removes the source file once the upload is finished, upload a copy.
+    boost::filesystem::path source_path = boost::filesystem::temp_directory_path()
+        / boost::filesystem::unique_path("." SLIC3R_APP_KEY ".upload.%%%%-%%%%-%%%%-%%%%");
+    if (std::string error_message; copy_file(p->external_gcode->path.string(), source_path.string(), error_message) != SUCCESS) {
+        show_error(this, GUI::format(_L("Failed to copy the G-code to %1%: %2%"), source_path.string(), error_message));
+        return;
+    }
+    upload_job.upload_data.source_path = std::move(source_path);
+    wxGetApp().printhost_job_queue().enqueue(std::move(upload_job));
+    get_notification_manager()->push_notification(GUI::format(_L("Scheduling upload to `%1%`. See Window -> Print Host Upload Queue"), physical_printer_config->opt_string("print_host")));
 }
 
 std::string Plater::get_upload_filename()
