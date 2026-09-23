@@ -471,6 +471,7 @@ namespace DoExport {
         print_statistics.estimated_normal_print_time = get_time_dhms(print_statistics.normal_print_time_seconds);
         print_statistics.estimated_silent_print_time = processor.is_stealth_time_estimator_enabled() ?
             get_time_dhms(print_statistics.silent_print_time_seconds) : "N/A";
+        print_statistics.klipper_estimate = result.print_statistics.klipper_estimate;
 
         // update filament statictics
         double total_extruded_volume = 0.0;
@@ -2975,6 +2976,8 @@ void GCodeGenerator::encode_full_config(const Print& print, std::vector<std::pai
     static constexpr auto banned_keys = {
         "compatible_printers"sv,
         "compatible_prints"sv,
+        // Runtime information about the connected printer, not a setting.
+        "klipper_estimator_limits"sv,
         //FIXME The print host keys should not be exported to full_print_config anymore. The following keys may likely be removed.
         "print_host"sv,
         "printhost_apikey"sv,

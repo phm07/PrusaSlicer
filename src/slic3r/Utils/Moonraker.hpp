@@ -40,6 +40,11 @@ public:
     const std::string& get_apikey() const { return m_apikey; }
     const std::string& get_cafile() const { return m_cafile; }
 
+    // Asynchronously reads the printer configuration needed by the Klipper print time estimator.
+    // fn is called from a worker thread with the serialized KlipperEstimator::PrinterLimits,
+    // or with an empty string if the printer is not reachable or its response could not be parsed.
+    void get_klipper_estimator_limits(std::function<void(std::string limits)> fn) const;
+
 protected:
 /*
 #ifdef WIN32

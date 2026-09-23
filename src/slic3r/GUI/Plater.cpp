@@ -120,6 +120,8 @@
 #include "PrintHostDialogs.hpp"
 #include "../Utils/ASCIIFolding.hpp"
 #include "../Utils/PrintHost.hpp"
+#include "../Utils/Moonraker.hpp"
+#include "libslic3r/GCode/KlipperEstimator.hpp"
 #include "../Utils/UndoRedo.hpp"
 #include "../Utils/PresetUpdater.hpp"
 #include "../Utils/PresetUpdaterWrapper.hpp"
@@ -379,6 +381,19 @@ struct Plater::priv
     std::string                 delayed_error_message;
 
     wxTimer                     background_process_timer;
+
+    // Limits of the selected Klipper printer used for the print time estimation, read from Moonraker.
+    struct KlipperEstimatorState {
+        // Identifies the printer the limits belong to.
+        std::string                           host;
+        // Serialized KlipperEstimator::PrinterLimits, the cached ones while the printer is offline, empty if not known.
+        std::string                           limits;
+        bool                                  request_pending{ false };
+        std::chrono::steady_clock::time_point last_request;
+    };
+    std::shared_ptr<KlipperEstimatorState> klipper_estimator{ std::make_shared<KlipperEstimatorState>() };
+    // Returns the limits to be used for the print time estimation and refreshes them from the printer if they are outdated.
+    std::string klipper_estimator_limits();
 
     std::string                 label_btn_export;
     std::string                 label_btn_send;
@@ -2496,6 +2511,11 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
         full_config.set("profile_version", selected_printer.vendor->config_version.to_string(), true);
     }
 
+    // Estimate the print time with the Klipper planner if a Klipper printer is selected and online.
+    // Changing the limits invalidates the G-code export step only.
+    if (printer_technology == ptFFF)
+        full_config.set_key_value("klipper_estimator_limits", new ConfigOptionString(this->klipper_estimator_limits()));
+
     // If the update_background_process() was not called by the timer, kill the timer,
     // so the update_restart_background_process() will not be called again in vain.
     background_process_timer.Stop();
@@ -2750,6 +2770,80 @@ void Plater::priv::export_gcode(fs::path output_path, bool output_path_on_remova
     // If the SLA processing of just a single object's supports is running, restart slicing for the whole object.
     this->background_process.set_task(PrintBase::TaskParams());
     this->restart_background_process(priv::UPDATE_BACKGROUND_PROCESS_FORCE_EXPORT);
+}
+
+// The limits last read from a printer are cached in PrusaSlicer.ini, to be used while the printer is offline.
+static constexpr const char *KlipperEstimatorCacheSection = "klipper_estimator_limits";
+
+static std::string klipper_estimator_cache_key(const std::string &print_host)
+{
+    // Keep the key safe to be stored into the ini file.
+    std::string key = print_host;
+    for (char &c : key)
+        if (!(std::isalnum((unsigned char)c) || c == '.' || c == '-' || c == '_'))
+            c = '_';
+    return key;
+}
+
+static std::string load_cached_klipper_estimator_limits(const std::string &print_host)
+{
+    const std::string limits = wxGetApp().app_config->get(KlipperEstimatorCacheSection, klipper_estimator_cache_key(print_host));
+    return KlipperEstimator::PrinterLimits::deserialize(limits).has_value() ? limits : std::string();
+}
+
+std::string Plater::priv::klipper_estimator_limits()
+{
+    KlipperEstimatorState &state = *klipper_estimator;
+    const DynamicPrintConfig *printer_config = wxGetApp().preset_bundle->physical_printers.get_selected_printer_config();
+    const auto *host_type = printer_config != nullptr ? printer_config->option<ConfigOptionEnum<PrintHostType>>("host_type") : nullptr;
+    if (host_type == nullptr || host_type->value != htMoonraker) {
+        state = KlipperEstimatorState();
+        return {};
+    }
+
+    const std::string print_host = printer_config->opt_string("print_host");
+    const std::string host       = print_host + "\n" + printer_config->opt_string("printhost_apikey");
+    if (host != state.host) {
+        // Another printer was selected, do not use the limits of the previous one.
+        // Start with the cached limits of this printer, so that the estimate does not change once it responds.
+        state        = KlipperEstimatorState();
+        state.host   = host;
+        state.limits = load_cached_klipper_estimator_limits(print_host);
+    }
+
+    // Refresh the limits regularly, so that the estimate follows the printer being switched on / off and its configuration.
+    using namespace std::chrono_literals;
+    const auto now = std::chrono::steady_clock::now();
+    if (!state.request_pending && (state.last_request == std::chrono::steady_clock::time_point() || now - state.last_request > 30s)) {
+        state.request_pending = true;
+        state.last_request    = now;
+        DynamicPrintConfig config = *printer_config;
+        Moonraker(&config).get_klipper_estimator_limits([this, host, print_host, weak_state = std::weak_ptr<KlipperEstimatorState>(klipper_estimator)](std::string limits) {
+            wxGetApp().CallAfter([this, host, print_host, weak_state, limits = std::move(limits)]() mutable {
+                std::shared_ptr<KlipperEstimatorState> state = weak_state.lock();
+                if (!state || state->host != host)
+                    // The Plater was closed or another printer was selected meanwhile.
+                    return;
+                state->request_pending = false;
+                if (limits.empty()) {
+                    // The printer is offline, use the limits it reported last time.
+                    limits = load_cached_klipper_estimator_limits(print_host);
+                    if (limits != state->limits)
+                        BOOST_LOG_TRIVIAL(info) << (limits.empty() ? "Klipper printer is offline and its limits are not known, using the default print time estimate." :
+                                                                     "Klipper printer is offline, estimating the print time with its cached limits.");
+                } else {
+                    wxGetApp().app_config->set(KlipperEstimatorCacheSection, klipper_estimator_cache_key(print_host), limits);
+                    if (limits != state->limits)
+                        BOOST_LOG_TRIVIAL(info) << "Klipper printer is online, estimating the print time with its limits.";
+                }
+                if (state->limits != limits) {
+                    state->limits = limits;
+                    this->schedule_background_process();
+                }
+            });
+        });
+    }
+    return state.limits;
 }
 
 unsigned int Plater::priv::update_restart_background_process(bool force_update_scene, bool force_update_preview)

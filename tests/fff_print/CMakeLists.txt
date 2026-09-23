@@ -25,6 +25,7 @@ add_executable(${_TEST_NAME}_tests
     benchmark_seams.cpp
 	test_gcodefindreplace.cpp
 	test_gcodewriter.cpp
+	test_klipper_estimator.cpp
 	test_cancel_object.cpp
     test_layers.cpp
 	test_model.cpp

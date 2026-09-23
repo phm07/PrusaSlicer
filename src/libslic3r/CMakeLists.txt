@@ -223,6 +223,8 @@ set(SLIC3R_SOURCES
     GCode/WipeTowerIntegration.hpp
     GCode/GCodeProcessor.cpp
     GCode/GCodeProcessor.hpp
+    GCode/KlipperEstimator.cpp
+    GCode/KlipperEstimator.hpp
     GCode/AvoidCrossingPerimeters.cpp
     GCode/AvoidCrossingPerimeters.hpp
     GCode/Travels.cpp

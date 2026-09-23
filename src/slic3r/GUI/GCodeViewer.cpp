@@ -2878,6 +2878,8 @@ void GCodeViewer::render_legend(float& legend_height)
     if (show_estimated_time) {
         ImGui::Spacing();
         std::string time_title = _u8L("Estimated printing times");
+        if (m_print_statistics.klipper_estimate)
+            time_title += " (Klipper)";
         auto can_show_mode_button = [this](libvgcode::ETimeMode mode) {
             std::vector<std::string> time_strs;
             for (size_t i = 0; i < m_print_statistics.modes.size(); ++i) {
