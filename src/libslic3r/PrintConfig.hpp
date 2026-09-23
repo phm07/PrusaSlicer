@@ -892,6 +892,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionPercents,            filament_shrinkage_compensation_z))
     ((ConfigOptionFloats,              filament_flush_volume))
     ((ConfigOptionFloats,              filament_flush_speed))
+    ((ConfigOptionFloatsNullable,      filament_pressure_advance))
     ((ConfigOptionBool,                gcode_comments))
     ((ConfigOptionEnum<GCodeFlavor>,   gcode_flavor))
     ((ConfigOptionEnum<LabelObjectsStyle>,  gcode_label_objects))

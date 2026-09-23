@@ -2311,6 +2311,9 @@ void TabFilament::build()
         optgroup->append_single_option_line("filament_shrinkage_compensation_xy");
         optgroup->append_single_option_line("filament_shrinkage_compensation_z");
 
+        optgroup = page->new_optgroup(L("Pressure advance"));
+        create_line_with_near_label_widget(optgroup, "filament_pressure_advance");
+
         optgroup = page->new_optgroup(L("Wipe tower parameters"));
         optgroup->append_single_option_line("filament_minimal_purge_on_wipe_tower");
 
@@ -2479,6 +2482,11 @@ void TabFilament::toggle_options()
         bool multitool_ramming = m_config->opt_bool("filament_multitool_ramming", 0);
         toggle_option("filament_multitool_ramming_volume", multitool_ramming);
         toggle_option("filament_multitool_ramming_flow", multitool_ramming);
+
+        Page* page = m_active_page;
+        const auto og_it = std::find_if(page->m_optgroups.begin(), page->m_optgroups.end(), [](const ConfigOptionsGroupShp og) { return og->title == "Pressure advance"; });
+        if (og_it != page->m_optgroups.end())
+            update_line_with_near_label_widget(*og_it, "filament_pressure_advance");
     }
 
     if (m_active_page->title() == "Filament Overrides")

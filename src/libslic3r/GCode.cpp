@@ -3914,6 +3914,15 @@ std::string GCodeGenerator::retract_and_wipe(bool toolchange, bool reset_e)
     return gcode;
 }
 
+// Emit the per-filament pressure advance value if it is set and the firmware supports it.
+// Must be called after the toolchange, as the command applies to the active extruder.
+static std::string set_pressure_advance(const PrintConfig &config, const unsigned int extruder_id)
+{
+    if (config.gcode_flavor.value != gcfKlipper || config.filament_pressure_advance.is_nil(extruder_id))
+        return {};
+    return "SET_PRESSURE_ADVANCE ADVANCE=" + float_to_string_decimal_point(config.filament_pressure_advance.get_at(extruder_id)) + "\n";
+}
+
 std::string GCodeGenerator::set_extruder(unsigned int extruder_id, double print_z)
 {
     if (!m_writer.need_toolchange(extruder_id))
@@ -3923,7 +3932,7 @@ std::string GCodeGenerator::set_extruder(unsigned int extruder_id, double print_
     if (!m_writer.multiple_extruders) {
         this->placeholder_parser().set("current_extruder", extruder_id);
 
-        std::string gcode;
+        std::string gcode = set_pressure_advance(m_config, extruder_id);
         // Append the filament start G-code.
         const std::string &start_filament_gcode = m_config.start_filament_gcode.get_at(extruder_id);
         if (! start_filament_gcode.empty()) {
@@ -4025,6 +4034,9 @@ std::string GCodeGenerator::set_extruder(unsigned int extruder_id, double print_
     }
 
     this->placeholder_parser().set("current_extruder", extruder_id);
+
+    // Set the new filament's pressure advance, before start_filament_gcode so that it can still be overridden there.
+    gcode += set_pressure_advance(m_config, extruder_id);
 
     // Append the filament start G-code.
     const std::string &start_filament_gcode = m_config.start_filament_gcode.get_at(extruder_id);
