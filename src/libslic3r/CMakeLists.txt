@@ -51,6 +51,8 @@ set(SLIC3R_SOURCES
     BuildVolume.cpp
     BuildVolume.hpp
     BoostAdapter.hpp
+    CalibrationPattern.cpp
+    CalibrationPattern.hpp
     clipper.cpp
     clipper.hpp
     ClipperUtils.cpp
@@ -86,6 +88,8 @@ set(SLIC3R_SOURCES
     ExtrusionEntity.hpp
     ExtrusionEntityCollection.cpp
     ExtrusionEntityCollection.hpp
+    ExtrusionMultiplierPattern.cpp
+    ExtrusionMultiplierPattern.hpp
     ExtrusionRole.cpp
     ExtrusionRole.hpp
     ExtrusionSimulator.cpp
