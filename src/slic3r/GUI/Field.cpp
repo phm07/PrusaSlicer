@@ -480,6 +480,12 @@ void TextCtrl::BUILD() {
 			m_opt.type == coFloat ?
 				m_opt.default_value->getFloat() :
 				m_opt.get_default_value<ConfigOptionPercents>()->get_at(m_opt_idx);
+        if (m_opt.nullable && std::isnan(val)) {
+            // Default is N/A, use the minimum as the value to restore when the option gets enabled.
+            text_value = na_value();
+            m_last_meaningful_value = double_to_string(m_opt.min == -FLT_MAX ? 0. : m_opt.min);
+            break;
+        }
 		text_value = double_to_string(val);
         m_last_meaningful_value = text_value;
 		break;

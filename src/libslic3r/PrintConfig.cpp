@@ -1601,6 +1601,16 @@ void PrintConfigDef::init_fff_params()
     def->mode = comExpert;
     def->set_default_value(new ConfigOptionFloats{0.});
 
+    def = this->add_nullable("filament_pressure_advance", coFloats);
+    def->label = L("Pressure advance");
+    def->tooltip = L("Pressure advance value for this filament. If set and the G-code flavor is Klipper, "
+                     "a SET_PRESSURE_ADVANCE command is emitted whenever this filament becomes active. "
+                     "If not set, no command is emitted and the value configured in the firmware is used.");
+    def->sidetext = L("s");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloatsNullable { ConfigOptionFloatsNullable::nil_value() });
+
     def = this->add("fill_angle", coFloat);
     def->label = L("Fill angle");
     def->category = L("Infill");

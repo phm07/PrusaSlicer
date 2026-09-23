@@ -345,3 +345,47 @@ TEST_CASE("M201 for acceleation reset", "[GCode]") {
     INFO("M204 is not generated for repetier firmware");
     CHECK(!has_m204);
 }
+
+TEST_CASE("Filament pressure advance", "[GCode]") {
+    DynamicPrintConfig config = Slic3r::DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({
+        { "machine_limits_usage", "time_estimate_only" },
+    });
+
+    const auto count_pa_commands = [](const std::string &gcode, const std::string &expected) {
+        size_t count = 0;
+        for (size_t pos = gcode.find("SET_PRESSURE_ADVANCE"); pos != std::string::npos; pos = gcode.find("SET_PRESSURE_ADVANCE", pos + 1)) {
+            const size_t eol = gcode.find('\n', pos);
+            CHECK(gcode.substr(pos, eol - pos) == expected);
+            ++count;
+        }
+        return count;
+    };
+
+    SECTION("Emitted for Klipper when set") {
+        config.set_deserialize_strict({
+            { "gcode_flavor", "klipper" },
+            { "filament_pressure_advance", "0.045" },
+        });
+        const std::string gcode = Slic3r::Test::slice({TestMesh::cube_20x20x20}, config);
+        CHECK(count_pa_commands(gcode, "SET_PRESSURE_ADVANCE ADVANCE=0.045") == 1);
+    }
+
+    SECTION("Not emitted for Klipper when not set") {
+        config.set_deserialize_strict({
+            { "gcode_flavor", "klipper" },
+            { "filament_pressure_advance", "nil" },
+        });
+        const std::string gcode = Slic3r::Test::slice({TestMesh::cube_20x20x20}, config);
+        CHECK(count_pa_commands(gcode, "") == 0);
+    }
+
+    SECTION("Not emitted for other firmware flavors") {
+        config.set_deserialize_strict({
+            { "gcode_flavor", "marlin2" },
+            { "filament_pressure_advance", "0.045" },
+        });
+        const std::string gcode = Slic3r::Test::slice({TestMesh::cube_20x20x20}, config);
+        CHECK(count_pa_commands(gcode, "") == 0);
+    }
+}
