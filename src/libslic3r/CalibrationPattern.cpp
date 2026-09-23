@@ -42,6 +42,8 @@ constexpr double GLYPH_SPACING        = 3.;
 constexpr double GLYPH_SPACING_NARROW = 1.;
 // Z height to travel at from the end of the start G-code to the pattern.
 constexpr double SAFE_TRAVEL_Z        = 5.;
+// Speed used if the print preset sets the speed to zero (automatic) and there is no volumetric speed limit.
+constexpr double AUTO_SPEED           = 60.;
 
 double glyph_advance(char c) { return (c == '1' || c == '.') ? GLYPH_SPACING_NARROW : GLYPH_SPACING; }
 
@@ -92,6 +94,164 @@ Vec2d CalibrationPatternGenerator::to_bed(const Vec2d &pt) const
     const double s = std::sin(a);
     const Vec2d  d = pt - m_center;
     return { c * d.x() + s * d.y() + m_center.x(), c * d.y() - s * d.x() + m_center.y() };
+}
+
+double CalibrationPatternGenerator::extrusion_width(const char *opt_key, FlowRole role, bool first_layer, double height) const
+{
+    auto option = [this](const char *key) {
+        const auto *opt = m_full_config.option<ConfigOptionFloatOrPercent>(key);
+        if (opt == nullptr)
+            throw InvalidArgument(format("Missing configuration option %1%", key));
+        return opt;
+    };
+    const ConfigOptionFloatOrPercent *opt = option(first_layer && option("first_layer_extrusion_width")->value > 0. ? "first_layer_extrusion_width" : opt_key);
+    if (opt->value == 0.)
+        opt = option("extrusion_width");
+    return Flow::new_from_config_width(role, *opt, float(m_nozzle_diameter), float(height)).width();
+}
+
+CalibrationPatternGenerator::SquareFlow CalibrationPatternGenerator::square_flow(int perimeters, bool first_layer, bool top_layer) const
+{
+    SquareFlow out;
+    out.height              = first_layer ? m_first_layer_height : m_layer_height;
+    out.ext_perimeter_width = this->extrusion_width("external_perimeter_extrusion_width", frExternalPerimeter, first_layer, out.height);
+    out.perimeter_width     = this->extrusion_width("perimeter_extrusion_width", frPerimeter, first_layer, out.height);
+    out.infill_width        = top_layer ?
+        this->extrusion_width("top_infill_extrusion_width", frTopSolidInfill, first_layer, out.height) :
+        this->extrusion_width("solid_infill_extrusion_width", frSolidInfill, first_layer, out.height);
+
+    // Perimeter spacing the same way as PerimeterGenerator does.
+    const double ext_spacing       = calibration::extrusion_spacing(out.ext_perimeter_width, out.height);
+    const double perimeter_spacing = calibration::extrusion_spacing(out.perimeter_width, out.height);
+    const double infill_spacing    = calibration::extrusion_spacing(out.infill_width, out.height);
+    double offset = out.ext_perimeter_width / 2.;
+    for (int i = 0; i < perimeters; ++ i) {
+        if (i == 1)
+            offset += (ext_spacing + perimeter_spacing) / 2.;
+        else if (i > 1)
+            offset += perimeter_spacing;
+        out.perimeter_offsets.emplace_back(offset);
+    }
+    const double inset   = (perimeters == 1 ? ext_spacing : perimeter_spacing) / 2.;
+    const double overlap = m_full_config.get_abs_value("infill_overlap", inset + infill_spacing / 2.);
+    out.infill_offset    = offset + inset - std::max(0., overlap);
+    return out;
+}
+
+double CalibrationPatternGenerator::print_speed(SquareRole role, bool first_layer, double width, double height) const
+{
+    const char *opt_key = role == SquareRole::ExternalPerimeter ? "external_perimeter_speed" :
+                          role == SquareRole::Perimeter         ? "perimeter_speed" :
+                          role == SquareRole::SolidInfill       ? "solid_infill_speed" : "top_solid_infill_speed";
+    const double area = calibration::extrusion_area(width, height);
+    // Volumetric speed limit.
+    double max_volumetric_speed = 0.;
+    for (double limit : { m_config.max_volumetric_speed.value, m_config.filament_max_volumetric_speed.get_at(0) })
+        if (limit > 0.)
+            max_volumetric_speed = max_volumetric_speed > 0. ? std::min(max_volumetric_speed, limit) : limit;
+
+    double speed = m_full_config.get_abs_value(opt_key);
+    if (speed <= 0.)
+        // Automatic speed.
+        speed = max_volumetric_speed > 0. ? max_volumetric_speed / area : AUTO_SPEED;
+    if (first_layer) {
+        const double first_layer_infill_speed = role == SquareRole::SolidInfill ? m_full_config.get_abs_value("first_layer_infill_speed", speed) : 0.;
+        speed = first_layer_infill_speed > 0. ? first_layer_infill_speed : m_full_config.get_abs_value("first_layer_speed", speed);
+    }
+    if (max_volumetric_speed > 0.)
+        speed = std::min(speed, max_volumetric_speed / area);
+    return speed;
+}
+
+void CalibrationPatternGenerator::set_acceleration(SquareRole role, bool first_layer)
+{
+    const PrintConfig &c = m_config;
+    if (c.default_acceleration.value <= 0.)
+        return;
+    const bool infill    = role == SquareRole::SolidInfill || role == SquareRole::TopSolidInfill;
+    const bool perimeter = role == SquareRole::ExternalPerimeter || role == SquareRole::Perimeter;
+    double acceleration = c.default_acceleration.value;
+    if (first_layer && c.first_layer_acceleration.value > 0.)
+        acceleration = c.first_layer_acceleration.value;
+    else if (role == SquareRole::TopSolidInfill && c.top_solid_infill_acceleration.value > 0.)
+        acceleration = c.top_solid_infill_acceleration.value;
+    else if (infill && c.solid_infill_acceleration.value > 0.)
+        acceleration = c.solid_infill_acceleration.value;
+    else if (infill && c.infill_acceleration.value > 0.)
+        acceleration = c.infill_acceleration.value;
+    else if (role == SquareRole::ExternalPerimeter && c.external_perimeter_acceleration.value > 0.)
+        acceleration = c.external_perimeter_acceleration.value;
+    else if (perimeter && c.perimeter_acceleration.value > 0.)
+        acceleration = c.perimeter_acceleration.value;
+    m_gcode += m_writer.set_print_acceleration(static_cast<unsigned int>(std::floor(acceleration + 0.5)));
+}
+
+void CalibrationPatternGenerator::draw_square_perimeters(const Vec2d &origin, double size, const SquareFlow &flow, bool first_layer, double flow_ratio)
+{
+    for (int i = int(flow.perimeter_offsets.size()) - 1; i >= 0; -- i) {
+        const bool       external = i == 0;
+        const SquareRole role     = external ? SquareRole::ExternalPerimeter : SquareRole::Perimeter;
+        const double     width    = external ? flow.ext_perimeter_width : flow.perimeter_width;
+        const double     speed    = this->print_speed(role, first_layer, width, flow.height);
+        const double     d        = flow.perimeter_offsets[i];
+        const Vec2d      min      = origin + Vec2d(d, d);
+        const Vec2d      max      = origin + Vec2d(size - d, size - d);
+        // Travel to the next loop outwards without retracting, it is short and does not leave the square.
+        move_to(min, i == int(flow.perimeter_offsets.size()) - 1);
+        set_role(external ? GCodeExtrusionRole::ExternalPerimeter : GCodeExtrusionRole::Perimeter);
+        set_acceleration(role, first_layer);
+        draw_line({ max.x(), min.y() }, width, flow.height, speed, flow_ratio);
+        draw_line(max,                  width, flow.height, speed, flow_ratio);
+        draw_line({ min.x(), max.y() }, width, flow.height, speed, flow_ratio);
+        draw_line(min,                  width, flow.height, speed, flow_ratio);
+    }
+}
+
+void CalibrationPatternGenerator::draw_square_infill(const Vec2d &origin, double size, const SquareFlow &flow, bool first_layer, bool top_layer, bool mirror, double flow_ratio)
+{
+    const SquareRole role = top_layer ? SquareRole::TopSolidInfill : SquareRole::SolidInfill;
+
+    // Infill boundary in coordinates relative to the square.
+    const double lo = flow.infill_offset;
+    const double hi = size - flow.infill_offset;
+    // Distribute the lines evenly over the boundary, adjusting the extrusion width to the resulting spacing
+    // the same way as FillBase::_adjust_solid_spacing() does.
+    const double spacing     = calibration::extrusion_spacing(flow.infill_width, flow.height);
+    const double diagonal    = 2. * (hi - lo) / std::sqrt(2.);
+    const int    num_lines   = std::max(1, int(std::round(diagonal / spacing)));
+    const double new_spacing = diagonal / num_lines;
+    const double width       = flow.infill_width + (new_spacing - spacing);
+    const double speed       = this->print_speed(role, first_layer, width, flow.height);
+    // Line ends are inset by half the spacing from the boundary, the boundary already includes the overlap
+    // with the perimeters.
+    const double inset       = new_spacing / 2.;
+    const double min         = lo + inset;
+    const double max         = hi - inset;
+
+    set_role(top_layer ? GCodeExtrusionRole::TopSolidInfill : GCodeExtrusionRole::SolidInfill);
+    set_acceleration(role, first_layer);
+    auto to_pattern = [&origin, mirror, size](const Vec2d &pt) -> Vec2d {
+        return origin + (mirror ? Vec2d(pt.x(), size - pt.y()) : pt);
+    };
+    bool reverse = false;
+    for (int i = 0; i < num_lines; ++ i) {
+        // Line x + y = c.
+        const double c = 2. * lo + (i + 0.5) * new_spacing * std::sqrt(2.);
+        // Intersections with the bottom or the right edge and with the left or the top edge.
+        Vec2d a { 0., std::max(min, c - max) };
+        a.x() = c - a.y();
+        Vec2d b { std::max(min, c - max), 0. };
+        b.y() = c - b.x();
+        if (a.x() - b.x() < EPSILON)
+            // The line misses the inset boundary in its corner.
+            continue;
+        if (reverse)
+            std::swap(a, b);
+        // Short connecting travel inside the square, don't retract.
+        move_to(to_pattern(a), false);
+        draw_line(to_pattern(b), width, flow.height, speed, flow_ratio);
+        reverse = ! reverse;
+    }
 }
 
 void CalibrationPatternGenerator::set_role(GCodeExtrusionRole role)

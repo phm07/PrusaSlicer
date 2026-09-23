@@ -66,6 +66,7 @@
 #include "Preferences.hpp"
 #include "PressureAdvanceDialog.hpp"
 #include "ExtrusionMultiplierDialog.hpp"
+#include "FirstLayerDialog.hpp"
 #include "WebViewPanel.hpp"
 #include "UserAccount.hpp"
 
@@ -1760,6 +1761,13 @@ void MainFrame::init_menubar_as_editor()
     wxMenu* calibrationMenu = nullptr;
     if (m_plater) {
         calibrationMenu = new wxMenu();
+        append_menu_item(calibrationMenu, wxID_ANY, _L("&First Layer") + dots, _L("Generate a first layer calibration pattern of squares spread over the print bed"),
+            [this](wxCommandEvent&) {
+                FirstLayerDialog dlg(this);
+                if (dlg.ShowModal() == wxID_OK)
+                    m_plater->load_external_gcode(dlg.gcode(), dlg.filename());
+            }, "", nullptr,
+            [this]() { return m_plater->printer_technology() == ptFFF; }, this);
         append_menu_item(calibrationMenu, wxID_ANY, _L("&Pressure Advance") + dots, _L("Generate a pressure advance calibration pattern for the active presets"),
             [this](wxCommandEvent&) {
                 PressureAdvanceDialog dlg(this);

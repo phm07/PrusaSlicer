@@ -99,6 +99,8 @@ set(SLIC3R_SOURCES
     Feature/Interlocking/VoxelUtils.cpp
     Feature/Interlocking/VoxelUtils.hpp
     FileParserError.hpp
+    FirstLayerPattern.cpp
+    FirstLayerPattern.hpp
     Feature/FuzzySkin/FuzzySkin.cpp
     Feature/FuzzySkin/FuzzySkin.hpp
     Feature/FullSpectrum/VirtualExtruder.cpp

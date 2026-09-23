@@ -11,6 +11,7 @@ add_executable(${_TEST_NAME}_tests
 	test_extrusion_entity.cpp
 	test_extrusion_multiplier_pattern.cpp
 	test_fill.cpp
+	test_first_layer_pattern.cpp
 	test_flow.cpp
 	test_gaps.cpp
 	test_gcode.cpp

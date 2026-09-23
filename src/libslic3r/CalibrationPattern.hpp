@@ -8,6 +8,7 @@
 
 #include "BoundingBox.hpp"
 #include "ExtrusionRole.hpp"
+#include "Flow.hpp"
 #include "PlaceholderParser.hpp"
 #include "Polygon.hpp"
 #include "PrintConfig.hpp"
@@ -84,6 +85,34 @@ protected:
     static constexpr double LABEL_HEIGHT = 4.;
     // Length of a digit segment.
     static constexpr double LABEL_SEGMENT_LENGTH = 2.;
+
+    // Extrusion roles of the solid squares, see print_speed() and set_acceleration().
+    enum class SquareRole { ExternalPerimeter, Perimeter, SolidInfill, TopSolidInfill };
+    // Flow parameters of a layer of a solid square, see square_flow().
+    struct SquareFlow {
+        double height;
+        double ext_perimeter_width;
+        double perimeter_width;
+        double infill_width;
+        // Distance of the perimeter centerlines from the edge of the square, from the outermost one.
+        std::vector<double> perimeter_offsets;
+        // Distance of the infill boundary from the edge of the square, including the infill / perimeters overlap.
+        double infill_offset;
+    };
+    // Extrusion widths and perimeter spacing from the print preset, the same way as for a sliced print.
+    SquareFlow square_flow(int perimeters, bool first_layer, bool top_layer) const;
+    // Extrusion width from the print preset, see PrintRegion::flow().
+    double     extrusion_width(const char *opt_key, FlowRole role, bool first_layer, double height) const;
+    // Print speed from the print preset including the volumetric speed limits, see GCodeGenerator::_extrude().
+    double     print_speed(SquareRole role, bool first_layer, double width, double height) const;
+    // Acceleration from the print preset, nothing is emitted if default_acceleration is zero.
+    void       set_acceleration(SquareRole role, bool first_layer);
+    // Rectangular loops of a square with the given bottom left corner, from the innermost one out,
+    // the external perimeter last, as PrusaSlicer does by default.
+    void       draw_square_perimeters(const Vec2d &origin, double size, const SquareFlow &flow, bool first_layer, double flow_ratio = 1.);
+    // Solid infill of a square of 45 degrees lines, connected by travels. mirror flips the lines along Y,
+    // to alternate the direction layer by layer.
+    void       draw_square_infill(const Vec2d &origin, double size, const SquareFlow &flow, bool first_layer, bool top_layer, bool mirror, double flow_ratio = 1.);
 
     // Fan speed of the given layer, respecting disable_fan_first_layers.
     int fan_speed(int layer) const { return layer < m_config.disable_fan_first_layers.get_at(0) ? 0 : m_fan_speed; }
