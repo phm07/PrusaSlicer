@@ -10,6 +10,8 @@
 #include <wx/spinctrl.h>
 #include <wx/valtext.h>
 
+#include <limits>
+
 BEGIN_EVENT_TABLE(SpinInputBase, wxPanel)
 
 EVT_KEY_DOWN(SpinInputBase::keyPressed)
@@ -489,6 +491,8 @@ void SpinInputDouble::Create(wxWindow *parent,
     if (text.ToDouble(&initialFromText)) initial = initialFromText;
     SetRange(min, max);
     SetIncrement(inc);
+    // val is not initialized yet. Make sure SetValue() does not skip filling in the text if val happens to equal initial.
+    val = std::numeric_limits<double>::quiet_NaN();
     SetValue(initial);
     messureSize();
 }
@@ -558,6 +562,9 @@ void SpinInputDouble::SetIncrement(double inc_in)
 void SpinInputDouble::SetDigits(unsigned digits_in)
 {
     digits = int(digits_in);
+    // Reformat the current value with the new number of digits.
+    if (text_ctrl != nullptr)
+        text_ctrl->ChangeValue(wxString::FromDouble(val, digits));
 }
 
 void SpinInputDouble::onTimer(wxTimerEvent &evnet) {

@@ -33,6 +33,7 @@ add_executable(${_TEST_NAME}_tests
 	test_print.cpp
 	test_printgcode.cpp
 	test_printobject.cpp
+	test_pressure_advance_pattern.cpp
     test_retraction.cpp
 	test_shells.cpp
 	test_skirt_brim.cpp

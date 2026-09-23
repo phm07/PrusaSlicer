@@ -515,6 +515,10 @@ private:
 
 std::vector<const PrintInstance*> sort_object_instances_by_model_order(const Print& print);
 
+// Parse the custom G-code, try to find mcode_set_temp_dont_wait and mcode_set_temp_and_wait or optionally G10 with temperature inside the custom G-code.
+// Returns true if one of the temp commands are found, and try to parse the target temperature value into temp_out.
+bool custom_gcode_sets_temperature(const std::string &gcode, const int mcode_set_temp_dont_wait, const int mcode_set_temp_and_wait, const bool include_g10, int &temp_out);
+
 }
 
 #endif
