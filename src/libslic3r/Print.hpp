@@ -545,6 +545,8 @@ struct PrintStatistics
     float                           silent_print_time_seconds;
     std::string                     estimated_normal_print_time;
     std::string                     estimated_silent_print_time;
+    // The normal print time was estimated by the Klipper planner for a connected Klipper printer.
+    bool                            klipper_estimate;
     double                          total_used_filament;
     double                          total_extruded_volume;
     double                          total_cost;
@@ -573,6 +575,7 @@ struct PrintStatistics
 
     void clear()
     {
+        klipper_estimate                 = false;
         total_used_filament              = 0.;
         total_extruded_volume            = 0.;
         total_cost                       = 0.;

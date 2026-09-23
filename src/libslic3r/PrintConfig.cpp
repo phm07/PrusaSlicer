@@ -2209,6 +2209,14 @@ void PrintConfigDef::init_fff_params()
     def->mode = comExpert;
     def->set_default_value(new ConfigOptionString(""));
 
+    // Not a user setting: The limits of the connected Klipper printer, filled in by the UI from Moonraker
+    // (serialized KlipperEstimator::PrinterLimits). When not empty, the print time is estimated by KlipperEstimator.
+    def = this->add("klipper_estimator_limits", coString);
+    def->label = "Klipper estimator limits";
+    def->cli = ConfigOptionDef::nocli;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionString(""));
+
     def = this->add("remaining_times", coBool);
     def->label = L("Supports remaining times");
     def->tooltip = L("Emit M73 P[percent printed] R[remaining time in minutes] at 1 minute"

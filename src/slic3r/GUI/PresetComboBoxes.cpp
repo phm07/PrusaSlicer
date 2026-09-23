@@ -653,6 +653,8 @@ bool PresetComboBox::selection_is_changed_according_to_physical_printers()
         tab->update_preset_choice();
         // update action buttons to show/hide "Send to" button
         wxGetApp().plater()->show_action_buttons();
+        // the print time estimate depends on the physical printer (Klipper estimator)
+        wxGetApp().plater()->schedule_background_process();
 
         // we need just to update according Plater<->Tab PresetComboBox 
         if (dynamic_cast<PlaterPresetComboBox*>(this)!=nullptr) {

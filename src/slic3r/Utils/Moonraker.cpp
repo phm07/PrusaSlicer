@@ -20,6 +20,7 @@
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/format.hpp"
 #include "libslic3r/AppConfig.hpp"
+#include "libslic3r/GCode/KlipperEstimator.hpp"
 #include "Http.hpp"
 
 namespace fs = boost::filesystem;
@@ -235,6 +236,37 @@ bool Moonraker::upload(PrintHostUpload upload_data, ProgressFn prorgess_fn, Erro
         .perform_sync();
 
     return res;
+}
+
+void Moonraker::get_klipper_estimator_limits(std::function<void(std::string limits)> fn) const
+{
+    // GET /printer/objects/query?configfile=settings returns the parsed Klipper configuration including the defaults.
+    const char* name = get_name();
+    auto url = make_url("printer/objects/query?configfile=settings");
+
+    BOOST_LOG_TRIVIAL(debug) << boost::format("%1%: Get printer settings at: %2%") % name % url;
+
+    auto http = Http::get(std::move(url));
+    set_auth(http);
+    http.timeout_connect(3)
+        .timeout_max(10)
+        .on_error([name, fn](std::string body, std::string error, unsigned status) {
+            BOOST_LOG_TRIVIAL(info) << boost::format("%1%: Printer settings not available: %2%, HTTP %3%, body: `%4%`") % name % error % status % body;
+            fn(std::string());
+        })
+        .on_complete([name, fn](std::string body, unsigned) {
+            std::string error;
+            if (std::optional<KlipperEstimator::PrinterLimits> limits = KlipperEstimator::PrinterLimits::from_moonraker_settings(body, &error); limits) {
+                fn(limits->serialize());
+            } else {
+                BOOST_LOG_TRIVIAL(error) << boost::format("%1%: Could not parse the printer settings: %2%") % name % error;
+                fn(std::string());
+            }
+        })
+#ifdef WIN32
+        .ssl_revoke_best_effort(m_ssl_revoke_best_effort)
+#endif
+        .perform();
 }
 
 void Moonraker::set_auth(Http &http) const

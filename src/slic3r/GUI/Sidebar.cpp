@@ -1423,7 +1423,7 @@ void Sidebar::update_sliced_info_sizer()
                 info_text = "";
                 new_label = _L("Estimated printing time") + ":";
                 if (ps.estimated_normal_print_time != "N/A") {
-                    new_label += format_wxstr("\n   - %1%", _L("normal mode"));
+                    new_label += format_wxstr("\n   - %1%", ps.klipper_estimate ? wxString("Klipper") : _L("normal mode"));
                     info_text += format_wxstr("\n%1%", short_time_ui(ps.estimated_normal_print_time));
 
                     m_plater->get_notification_manager()->set_slicing_complete_print_time(_u8L("Estimated printing time") + ": " + ps.estimated_normal_print_time, m_plater->is_sidebar_collapsed());

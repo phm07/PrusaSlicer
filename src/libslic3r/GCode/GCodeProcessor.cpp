@@ -665,6 +665,8 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
     m_binarizer.set_enabled(config.binary_gcode);
     m_result.is_binary_file = config.binary_gcode;
 
+    m_klipper_limits = KlipperEstimator::PrinterLimits::deserialize(config.klipper_estimator_limits.value);
+
     m_producer = EProducer::PrusaSlicer;
     m_flavor = config.gcode_flavor;
 
@@ -1061,6 +1063,7 @@ void GCodeProcessor::enable_stealth_time_estimator(bool enabled)
 
 void GCodeProcessor::reset()
 {
+    m_klipper_limits.reset();
     m_units = EUnits::Millimeters;
     m_global_positioning_type = EPositioningType::Absolute;
     m_e_local_positioning_type = EPositioningType::Absolute;
@@ -1438,8 +1441,12 @@ void GCodeProcessor::finalize(bool perform_post_process)
 
     update_estimated_statistics();
 
-    if (perform_post_process)
+    if (perform_post_process) {
         post_process();
+        // Klipper does not support binary G-code.
+        if (m_klipper_limits && !m_binarizer.is_enabled())
+            apply_klipper_time_estimate();
+    }
 }
 
 float GCodeProcessor::get_time(PrintEstimatedStatistics::ETimeMode mode) const
@@ -4599,6 +4606,209 @@ void GCodeProcessor::post_process()
     if (rename_file(out_path, result_filename))
         throw Slic3r::RuntimeError(std::string("Failed to rename the output G-code file from ") + out_path + " to " + result_filename + '\n' +
             "Is " + out_path + " locked?" + '\n');
+}
+
+// Calls fn(line) for each line of the file, without the line terminators.
+template<typename Fn>
+static void for_each_file_line(FILE *f, Fn &&fn)
+{
+    std::vector<char> buffer(65536 * 10, 0);
+    std::string       line;
+    for (;;) {
+        const size_t cnt_read = ::fread(buffer.data(), 1, buffer.size(), f);
+        if (::ferror(f))
+            throw Slic3r::RuntimeError("Error while reading from file.");
+        if (cnt_read == 0)
+            break;
+        auto it = buffer.begin();
+        const auto it_bufend = buffer.begin() + cnt_read;
+        while (it != it_bufend) {
+            const auto it_eol = std::find(it, it_bufend, '\n');
+            line.insert(line.end(), it, it_eol);
+            if (it_eol == it_bufend)
+                break;
+            if (!line.empty() && line.back() == '\r')
+                line.pop_back();
+            fn(line);
+            line.clear();
+            it = it_eol + 1;
+        }
+    }
+    if (!line.empty())
+        fn(line);
+}
+
+void GCodeProcessor::apply_klipper_time_estimate()
+{
+    assert(m_klipper_limits.has_value() && !m_binarizer.is_enabled());
+    static constexpr size_t Normal = static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal);
+
+    // The estimate is an improvement only, keep the existing one if anything fails.
+    try {
+        // 1) Estimate the time spent on each line of the final G-code.
+        KlipperEstimator::Estimator::Result estimate;
+        // First layer: between the first and the second layer change tag.
+        std::array<size_t, 2> layer_change_lines{ 0, 0 };
+        {
+            FilePtr in{ boost::nowide::fopen(m_result.filename.c_str(), "rb") };
+            if (in.f == nullptr)
+                throw Slic3r::RuntimeError("Cannot open file for reading.");
+            const std::string layer_change_tag = ";" + reserved_tag(ETags::Layer_Change);
+            KlipperEstimator::Estimator estimator(*m_klipper_limits);
+            size_t line_id = 0;
+            for_each_file_line(in.f, [&](const std::string &line) {
+                ++line_id;
+                estimator.process_line(line);
+                if (line == layer_change_tag) {
+                    if (layer_change_lines[0] == 0)
+                        layer_change_lines[0] = line_id;
+                    else if (layer_change_lines[1] == 0)
+                        layer_change_lines[1] = line_id;
+                }
+            });
+            estimate = estimator.finalize();
+        }
+        const size_t lines_count = estimate.line_times.size() - 1;
+        // Time elapsed at the end of each line.
+        std::vector<double> elapsed(lines_count + 1, 0.);
+        for (size_t i = 1; i <= lines_count; ++i)
+            elapsed[i] = elapsed[i - 1] + double(estimate.line_times[i]);
+        const double total_time = elapsed.back();
+        if (total_time <= 0.)
+            return;
+        auto elapsed_at = [&elapsed, lines_count](size_t line_id) { return elapsed[std::min(line_id, lines_count)]; };
+
+        const float first_layer_time = layer_change_lines[0] == 0 ? 0.f :
+            float(elapsed_at(layer_change_lines[1] == 0 ? lines_count : layer_change_lines[1]) - elapsed_at(layer_change_lines[0]));
+
+        // 2) Distribute the time to the moves. The time of the lines following the previous move's line up to the move's line
+        // is assigned to the move. Moves sharing a line (arcs) share its time proportionally to their original times.
+        std::vector<float> move_times(m_result.moves.size(), 0.f);
+        {
+            size_t prev_line = 0;
+            for (size_t i = 0; i < m_result.moves.size();) {
+                const unsigned int gcode_id = m_result.moves[i].gcode_id;
+                size_t j = i;
+                double original_time = 0.;
+                for (; j < m_result.moves.size() && m_result.moves[j].gcode_id == gcode_id; ++j)
+                    original_time += m_result.moves[j].time[Normal];
+                const size_t last_line = std::min(std::max<size_t>(gcode_id, prev_line), lines_count);
+                double time = elapsed_at(last_line) - elapsed_at(prev_line);
+                if (j == m_result.moves.size())
+                    // Lines after the last move.
+                    time += total_time - elapsed_at(last_line);
+                prev_line = last_line;
+                for (size_t k = i; k < j; ++k)
+                    move_times[k] = float(original_time > 0. ? time * m_result.moves[k].time[Normal] / original_time : time / double(j - i));
+                i = j;
+            }
+        }
+
+        // 3) Times between color changes and pauses, see process_custom_gcode_time().
+        std::vector<std::pair<CustomGCode::Type, std::pair<float, float>>> custom_gcode_times;
+        // Lines of the printer stops, for the remaining time to the next stop (M73 C).
+        std::vector<size_t> stop_lines;
+        {
+            std::vector<std::pair<CustomGCode::Type, float>> times;
+            float cache  = 0.f;
+            bool  needed = false;
+            for (size_t i = 0; i < m_result.moves.size(); ++i) {
+                const EMoveType type = m_result.moves[i].type;
+                if (type == EMoveType::Color_change || type == EMoveType::Pause_Print) {
+                    const CustomGCode::Type code = type == EMoveType::Color_change ? CustomGCode::ColorChange : CustomGCode::PausePrint;
+                    needed = true;
+                    if (cache != 0.f) {
+                        times.push_back({ code, cache });
+                        cache = 0.f;
+                    }
+                    stop_lines.push_back(m_result.moves[i].gcode_id);
+                }
+                cache += move_times[i];
+            }
+            if (needed && cache != 0.f)
+                times.push_back({ CustomGCode::ColorChange, cache });
+            float time_before = 0.f;
+            for (const auto &[type, time] : times) {
+                custom_gcode_times.push_back({ type, { time, float(total_time) - time_before } });
+                time_before += time;
+            }
+            std::sort(stop_lines.begin(), stop_lines.end());
+        }
+
+        // 4) Update the lines M73 and the estimated printing time comments of the file. The number of lines is kept,
+        // so that the moves' gcode ids stay valid.
+        auto time_in_minutes = [](double time_in_seconds) { return int((std::max(time_in_seconds, 0.) + 0.5) / 60.); };
+        static constexpr std::string_view m73_main = "M73 P";
+        static constexpr std::string_view m73_stop = "M73 C";
+        static constexpr std::string_view time_comment = "; estimated printing time (normal mode) = ";
+        static constexpr std::string_view first_layer_time_comment = "; estimated first layer printing time (normal mode) = ";
+        const std::string out_path = m_result.filename + ".klipper";
+        std::vector<size_t> lines_ends;
+        lines_ends.reserve(lines_count);
+        {
+            FilePtr in{ boost::nowide::fopen(m_result.filename.c_str(), "rb") };
+            if (in.f == nullptr)
+                throw Slic3r::RuntimeError("Cannot open file for reading.");
+            FilePtr out{ boost::nowide::fopen(out_path.c_str(), "wb") };
+            if (out.f == nullptr)
+                throw Slic3r::RuntimeError("Cannot open file for writing.");
+            std::string out_buffer;
+            size_t      line_id = 0;
+            size_t      out_pos = 0;
+            for_each_file_line(in.f, [&](const std::string &line) {
+                ++line_id;
+                const size_t size_before = out_buffer.size();
+                const double time        = elapsed_at(line_id);
+                if (boost::starts_with(line, m73_main)) {
+                    const int percent = std::min(100, int(100. * time / total_time + 1e-6));
+                    out_buffer += "M73 P" + std::to_string(percent) + " R" + std::to_string(time_in_minutes(total_time - time));
+                } else if (auto it = std::upper_bound(stop_lines.begin(), stop_lines.end(), line_id);
+                           boost::starts_with(line, m73_stop) && it != stop_lines.end()) {
+                    out_buffer += "M73 C" + std::to_string(time_in_minutes(elapsed_at(*it) - time));
+                } else if (boost::starts_with(line, time_comment)) {
+                    out_buffer += std::string(time_comment) + get_time_dhms(float(total_time));
+                } else if (boost::starts_with(line, first_layer_time_comment)) {
+                    out_buffer += std::string(first_layer_time_comment) + get_time_dhms(first_layer_time);
+                } else
+                    out_buffer += line;
+                out_buffer += '\n';
+                out_pos += out_buffer.size() - size_before;
+                lines_ends.emplace_back(out_pos);
+                if (out_buffer.size() > 65536) {
+                    ::fwrite(out_buffer.data(), 1, out_buffer.size(), out.f);
+                    out_buffer.clear();
+                }
+            });
+            ::fwrite(out_buffer.data(), 1, out_buffer.size(), out.f);
+            if (::ferror(out.f)) {
+                out.close();
+                boost::nowide::remove(out_path.c_str());
+                throw Slic3r::RuntimeError("Is the disk full?");
+            }
+        }
+        if (rename_file(out_path, m_result.filename)) {
+            boost::nowide::remove(out_path.c_str());
+            throw Slic3r::RuntimeError("Failed to rename " + out_path + " to " + m_result.filename);
+        }
+
+        // 5) The file was updated, update the result accordingly.
+        for (size_t i = 0; i < m_result.moves.size(); ++i)
+            m_result.moves[i].time[Normal] = move_times[i];
+        if (!m_result.lines_ends.empty())
+            m_result.lines_ends.front() = std::move(lines_ends);
+        TimeMachine &machine     = m_time_processor.machines[Normal];
+        machine.time             = total_time;
+        machine.first_layer_time = first_layer_time;
+        PrintEstimatedStatistics::Mode &mode = m_result.print_statistics.modes[Normal];
+        mode.time               = float(total_time);
+        mode.custom_gcode_times = std::move(custom_gcode_times);
+        m_result.print_statistics.klipper_estimate = true;
+
+        BOOST_LOG_TRIVIAL(info) << "Klipper estimated printing time: " << get_time_dhms(float(total_time));
+    } catch (const std::exception &ex) {
+        boost::nowide::remove((m_result.filename + ".klipper").c_str());
+        BOOST_LOG_TRIVIAL(error) << "Klipper print time estimation failed: " << ex.what();
+    }
 }
 
 void GCodeProcessor::store_move_vertex(EMoveType type, bool internal_only)

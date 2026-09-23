@@ -12,6 +12,7 @@
 #include "libslic3r/ExtrusionRole.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/CustomGCode.hpp"
+#include "libslic3r/GCode/KlipperEstimator.hpp"
 
 #include <LibBGCode/binarize/binarize.hpp>
 
@@ -72,6 +73,8 @@ namespace Slic3r {
         std::map<size_t, double>                                flush_per_extruder;
 
         std::array<Mode, static_cast<size_t>(ETimeMode::Count)> modes;
+        // The Normal mode time was estimated by KlipperEstimator, using the limits of a connected Klipper printer.
+        bool                                                    klipper_estimate;
 
         PrintEstimatedStatistics() { reset(); }
 
@@ -79,6 +82,7 @@ namespace Slic3r {
             for (Mode &m : modes) {
                 m.reset();
             }
+            klipper_estimate = false;
             volumes_per_color_change.clear();
             volumes_per_color_change.shrink_to_fit();
             volumes_per_extruder.clear();
@@ -513,6 +517,8 @@ namespace Slic3r {
         GCodeReader m_parser;
         bgcode::binarize::Binarizer m_binarizer;
         static bgcode::binarize::BinarizerConfig s_binarizer_config;
+        // Limits of a connected Klipper printer. When set, the Normal mode time is estimated by KlipperEstimator.
+        std::optional<KlipperEstimator::PrinterLimits> m_klipper_limits;
 
         EUnits m_units;
         EPositioningType m_global_positioning_type;
@@ -779,6 +785,10 @@ namespace Slic3r {
         // 1) add remaining time lines M73 and update moves' gcode ids accordingly
         // 2) update used filament data
         void post_process();
+
+        // replace the Normal mode time estimate of the post processed file by the one of KlipperEstimator:
+        // update the moves' times, the statistics, the lines M73 and the estimated printing time comments
+        void apply_klipper_time_estimate();
 
         void store_move_vertex(EMoveType type, bool internal_only = false);
 
