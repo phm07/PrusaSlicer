@@ -807,7 +807,9 @@ void MainFrame::create_preset_tabs()
     add_created_tab(new TabPrinter(m_tabpanel), wxGetApp().preset_bundle->printers.get_edited_preset().printer_technology() == ptFFF ? "printer" : "sla_printer");
     
     m_printables_webview = new PrintablesWebViewPanel(m_tabpanel);
-    add_printables_webview_tab();
+    m_printables_webview->Hide();
+    if (wxGetApp().app_config->get_bool("show_printables"))
+        add_printables_webview_tab();
    
     m_connect_webview = new ConnectWebViewPanel(m_tabpanel);
     m_printer_webview = new PrinterWebViewPanel(m_tabpanel, L"");
@@ -822,21 +824,25 @@ void MainFrame::on_account_login(const std::string& token)
 {
     add_connect_webview_tab();
     assert (m_printables_webview);
-    m_printables_webview->login(token);
+    if (m_printables_webview_added)
+        m_printables_webview->login(token);
 }
 void MainFrame::on_account_will_refresh()
 {
-    m_printables_webview->send_will_refresh();
+    if (m_printables_webview_added)
+        m_printables_webview->send_will_refresh();
 }
 void MainFrame::on_account_did_refresh(const std::string& token)
 {
-    m_printables_webview->send_refreshed_token(token);
+    if (m_printables_webview_added)
+        m_printables_webview->send_refreshed_token(token);
 }
 void MainFrame::on_account_logout()
 {
     remove_connect_webview_tab();
     assert (m_printables_webview);
-    m_printables_webview->logout();
+    if (m_printables_webview_added)
+        m_printables_webview->logout();
 }
 
 void MainFrame::add_connect_webview_tab()
@@ -849,7 +855,9 @@ void MainFrame::add_connect_webview_tab()
     // insert "Connect" tab to position next to "Printer" tab
     // order of tabs: Plater - Print Settings - Filaments - Printers - Prusa Connect - Prusa Link
 
-    int n = m_tabpanel->FindPage(m_printables_webview) + 1;
+    int n = (m_printables_webview_added
+        ? m_tabpanel->FindPage(m_printables_webview)
+        : m_tabpanel->FindPage(wxGetApp().get_tab(Preset::TYPE_PRINTER))) + 1;
     wxWindow* page = m_connect_webview;
     const wxString text(L"Prusa Connect");
     const std::string bmp_name = "";
@@ -917,7 +925,6 @@ void MainFrame::add_printables_webview_tab()
     m_printables_webview_added = true;
 }
 
-// no longer needed?
 void MainFrame::remove_printables_webview_tab()
 {
     if (!m_printables_webview_added) {
@@ -928,6 +935,7 @@ void MainFrame::remove_printables_webview_tab()
         m_tabpanel->SetSelection(0);
     m_tabpanel->RemovePage(size_t(n));
     m_printables_webview_added = false;
+    m_printables_webview->Hide();
     m_printables_webview->destroy_browser();
 }
 
@@ -2348,6 +2356,13 @@ void MainFrame::update_ui_from_settings()
 //    m_plater->sidebar().Layout();
 
     update_topbars();
+
+    if (m_printables_webview) {
+        if (wxGetApp().app_config->get_bool("show_printables"))
+            add_printables_webview_tab();
+        else
+            remove_printables_webview_tab();
+    }
 
     if (m_plater)
         m_plater->update_ui_from_settings();
