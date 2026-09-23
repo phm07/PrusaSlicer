@@ -242,6 +242,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/FirmwareDialog.hpp
     GUI/PrintHostDialogs.cpp
     GUI/PrintHostDialogs.hpp
+    GUI/ExtrusionMultiplierDialog.cpp
+    GUI/ExtrusionMultiplierDialog.hpp
     GUI/PressureAdvanceDialog.cpp
     GUI/PressureAdvanceDialog.hpp
     GUI/WifiConfigDialog.cpp
