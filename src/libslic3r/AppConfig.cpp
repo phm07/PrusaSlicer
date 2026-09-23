@@ -197,6 +197,9 @@ void AppConfig::set_defaults()
     if (get("restore_win_position").empty())
         set("restore_win_position", "1");       // allowed values - "1", "0", "crashed_at_..."
 
+    if (get("show_printables").empty())
+        set("show_printables", "1");
+
     if (get("show_hints").empty())
         set("show_hints", "1");
 

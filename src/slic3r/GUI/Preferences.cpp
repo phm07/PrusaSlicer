@@ -523,6 +523,11 @@ void PreferencesDialog::build()
 		app_config->get_bool("seq_top_layer_only"));
 
 	if (is_editor) {
+		append_bool_option(m_optgroup_gui, "show_printables",
+			L("Show Printables tab"),
+			L("If enabled, the Printables tab is shown in the main window."),
+			app_config->get_bool("show_printables"));
+
 		append_bool_option(m_optgroup_gui, "show_collapse_button",
 			L("Show sidebar collapse/expand button"),
 			L("If enabled, the button for the collapse sidebar will be appeared in top right corner of the 3D Scene"),
