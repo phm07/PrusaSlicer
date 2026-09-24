@@ -518,6 +518,9 @@ std::string CalibrationPatternGenerator::generate()
 
     this->reset_state();
     std::string out = this->header();
+    // Placeholders of the statistics, filled in by GCodeProcessor::post_process_file() the same way as for a sliced print.
+    if (m_config.remaining_times)
+        out += ";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::First_Line_M73_Placeholder) + "\n";
 
     // Start G-code, including the automatic temperature commands, the same way GCodeGenerator::_do_export() does.
     std::string start_gcode;
@@ -585,11 +588,28 @@ std::string CalibrationPatternGenerator::generate()
     m_gcode += m_writer.postamble();
 
     out += m_gcode;
+    if (m_config.remaining_times)
+        out += ";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Last_Line_M73_Placeholder) + "\n";
+
+    // Filament statistics, see GCodeGenerator::_do_export(). Only the first extruder prints.
+    const bool has_weight = m_config.filament_density.get_at(0) > 0.;
+    const bool has_cost   = has_weight && m_config.filament_cost.get_at(0) > 0.;
+    out += "\n";
+    out += PrintStatistics::FilamentUsedMmMask + " 0\n";
+    out += PrintStatistics::FilamentUsedCm3Mask + " 0\n";
+    if (has_weight)
+        out += PrintStatistics::FilamentUsedGMask + " 0\n";
+    if (has_cost)
+        out += PrintStatistics::FilamentCostMask + " 0\n";
+    out += "\n";
+    out += PrintStatistics::TotalFilamentUsedGMask + " 0\n";
+    out += PrintStatistics::TotalFilamentCostMask + " 0\n";
+    out += ";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Estimated_Printing_Time_Placeholder) + "\n";
 
     // Full config delimited the same way as GCodeGenerator does, so that GCodeProcessor accepts the file.
     // Keys excluded by GCodeGenerator::encode_full_config() and the print host credentials are not stored.
     static constexpr std::string_view banned_keys[] = {
-        "compatible_printers", "compatible_prints", "print_host", "printhost_apikey", "printhost_cafile", "printhost_password", "printhost_user"
+        "compatible_printers", "compatible_prints", "klipper_estimator_limits", "print_host", "printhost_apikey", "printhost_cafile", "printhost_password", "printhost_user"
     };
     out += "\n; prusaslicer_config = begin\n";
     for (const std::string &key : m_full_config.keys())

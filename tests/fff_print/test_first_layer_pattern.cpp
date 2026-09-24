@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <set>
 #include <string>
@@ -17,6 +18,7 @@
 #include "libslic3r/FirstLayerPattern.hpp"
 #include "libslic3r/GCodeReader.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
+#include "libslic3r/GCode/KlipperEstimator.hpp"
 
 using namespace Slic3r;
 using namespace Catch;
@@ -267,4 +269,91 @@ TEST_CASE("First layer pattern: loadable by the G-code viewer", "[FirstLayerPatt
     boost::filesystem::remove(path);
     CHECK(! result.moves.empty());
     CHECK(result.print_statistics.modes[0].time > 0.f);
+}
+
+TEST_CASE("First layer pattern: post-processed as a sliced print", "[FirstLayerPattern]")
+{
+    DynamicPrintConfig config = test_config();
+    config.set_deserialize_strict({
+        { "remaining_times", "1" },
+        { "filament_density", "1.24" },
+        { "filament_cost", "25" },
+        // Ignored, the pattern stays ASCII.
+        { "binary_gcode", "1" },
+    });
+    const std::string gcode = generate_first_layer_pattern(config, FirstLayerPatternParams());
+    CHECK(gcode.find(";_GP_FIRST_LINE_M73_PLACEHOLDER") != std::string::npos);
+    CHECK(gcode.find(";_GP_ESTIMATED_PRINTING_TIME_PLACEHOLDER") != std::string::npos);
+
+    // Loads and post-processes the pattern the way Plater::load_external_gcode() does.
+    auto post_process = [&gcode](const std::string &klipper_limits) {
+        const boost::filesystem::path path = boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("first_layer_pattern_%%%%-%%%%.gcode");
+        {
+            boost::nowide::ofstream file(path.string(), std::ios::binary);
+            file << gcode;
+        }
+        GCodeProcessor processor;
+        processor.process_file(path.string());
+        processor.post_process_file(klipper_limits);
+        std::string out;
+        {
+            boost::nowide::ifstream file(path.string(), std::ios::binary);
+            out.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+        }
+        boost::filesystem::remove(path);
+        return std::make_pair(out, processor.extract_result());
+    };
+    // Value of a "; key = value" statistics line.
+    auto stat = [](const std::string &gcode, const std::string &key) {
+        const size_t pos = gcode.find("\n; " + key + " = ");
+        REQUIRE(pos != std::string::npos);
+        return std::stod(gcode.substr(pos + key.size() + 6));
+    };
+
+    SECTION("Time estimate and filament statistics") {
+        const auto [out, result] = post_process(std::string());
+        CHECK(out.find("_GP_") == std::string::npos);
+        CHECK(out.find("\nM73 P0 R") != std::string::npos);
+        CHECK(out.find("\nM73 P100 R0\n") != std::string::npos);
+        CHECK(out.find("\n; estimated printing time (normal mode) = ") != std::string::npos);
+        CHECK(out.find("\n; estimated first layer printing time (normal mode) = ") != std::string::npos);
+        CHECK(out.find("\n; prusaslicer_config = end\n") != std::string::npos);
+        const double used_mm = stat(out, "filament used [mm]");
+        CHECK(used_mm > 0.);
+        // Furthest the filament was fed, as GCodeProcessor counts it: the final retraction is not subtracted.
+        double e = 0.;
+        double max_e = 0.;
+        GCodeReader parser;
+        parser.parse_buffer(out, [&e, &max_e](GCodeReader &, const GCodeReader::GCodeLine &line) {
+            if (line.has(Axis::E) && (line.cmd_is("G1") || line.cmd_is("G0")))
+                max_e = std::max(max_e, e += line.e());
+        });
+        CHECK(used_mm == Approx(max_e).margin(0.1));
+        CHECK(stat(out, "filament used [cm3]") == Approx(used_mm * PI * sqr(1.75 / 2.) * 0.001).margin(0.01));
+        CHECK(stat(out, "total filament used [g]") == Approx(stat(out, "filament used [cm3]") * 1.24).margin(0.01));
+        CHECK(stat(out, "total filament cost") > 0.);
+        CHECK(! result.is_binary_file);
+        CHECK(! result.print_statistics.klipper_estimate);
+        CHECK(result.print_statistics.modes[0].time > 0.f);
+    }
+
+    SECTION("Klipper estimate") {
+        KlipperEstimator::PrinterLimits limits;
+        limits.set_max_velocity(300.);
+        limits.set_max_acceleration(3000.);
+        const auto [out, result] = post_process(limits.serialize());
+        CHECK(out.find("_GP_") == std::string::npos);
+        CHECK(out.find("\nM73 P0 R") != std::string::npos);
+        CHECK(out.find("\n; estimated printing time (normal mode) = ") != std::string::npos);
+        CHECK(result.print_statistics.klipper_estimate);
+        CHECK(result.print_statistics.modes[0].time > 0.f);
+    }
+
+    SECTION("Klipper limits are not stored in the G-code") {
+        DynamicPrintConfig klipper_config = config;
+        KlipperEstimator::PrinterLimits limits;
+        limits.set_max_velocity(300.);
+        klipper_config.set_key_value("klipper_estimator_limits", new ConfigOptionString(limits.serialize()));
+        CHECK(generate_first_layer_pattern(klipper_config, FirstLayerPatternParams()).find("klipper_estimator_limits") == std::string::npos);
+    }
 }

@@ -42,6 +42,7 @@ class Model;
 class ModelObject;
 class ModelInstance;
 class Print;
+struct PrintStatistics;
 class SLAPrint;
 enum PrintObjectStep : unsigned int;
 enum SLAPrintObjectStep : unsigned int;
@@ -256,6 +257,8 @@ public:
     // act on it until the plate or the configuration changes. filename is the default name for the export / upload.
     void load_external_gcode(const std::string &gcode, const std::string &filename);
     bool has_external_gcode() const;
+    // Statistics of the external G-code shown in the sidebar instead of the ones of the sliced print, nullptr if none is loaded.
+    const PrintStatistics* external_gcode_statistics() const;
 	void eject_drive();
 
     std::optional<PrintHostJob> get_connect_print_host_job(bool multiple_beds);
