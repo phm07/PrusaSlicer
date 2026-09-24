@@ -336,6 +336,8 @@ struct Plater::priv
     struct ExternalGCode {
         boost::filesystem::path path;
         std::string             filename;
+        // Shown in the sidebar, as a sliced print shows its PrintStatistics.
+        PrintStatistics         statistics;
     };
     std::optional<ExternalGCode> external_gcode;
     // Delete the external G-code and return to showing the sliced G-code.
@@ -2116,6 +2118,7 @@ void Plater::priv::clear_external_gcode()
     boost::system::error_code ec;
     boost::filesystem::remove(external_gcode->path, ec);
     external_gcode.reset();
+    sidebar->show_sliced_info_sizer(false);
     gcode_results[s_multiple_beds.get_active_bed()].reset();
     q->reset_gcode_toolpaths();
     if (preview != nullptr)
@@ -2838,7 +2841,9 @@ std::string Plater::priv::klipper_estimator_limits()
                 }
                 if (state->limits != limits) {
                     state->limits = limits;
-                    this->schedule_background_process();
+                    // Reslicing would discard the external G-code, which keeps the estimate it was loaded with.
+                    if (!this->external_gcode)
+                        this->schedule_background_process();
                 }
             });
         });
@@ -6119,16 +6124,41 @@ void Plater::load_external_gcode(const std::string &gcode, const std::string &fi
     try {
         wxBusyCursor wait;
         processor.process_file(path.string());
+        // Fill in the estimated printing time and the filament statistics as for a sliced print, estimating the time
+        // with the Klipper planner if a Klipper printer is selected, see update_background_process().
+        processor.post_process_file(printer_technology() == ptFFF ? p->klipper_estimator_limits() : std::string());
     } catch (const std::exception &ex) {
         boost::system::error_code ec;
         boost::filesystem::remove(path, ec);
         show_error(this, ex.what());
         return;
     }
+    // Statistics of the sliced info panel, see GCodeGenerator::update_print_estimated_stats().
+    PrintStatistics statistics;
+    {
+        using ETimeMode = PrintEstimatedStatistics::ETimeMode;
+        const GCodeProcessorResult &result = processor.get_result();
+        statistics.normal_print_time_seconds   = result.print_statistics.modes[size_t(ETimeMode::Normal)].time;
+        statistics.silent_print_time_seconds   = result.print_statistics.modes[size_t(ETimeMode::Stealth)].time;
+        statistics.estimated_normal_print_time = get_time_dhms(statistics.normal_print_time_seconds);
+        statistics.estimated_silent_print_time = processor.is_stealth_time_estimator_enabled() ? get_time_dhms(statistics.silent_print_time_seconds) : "N/A";
+        statistics.klipper_estimate            = result.print_statistics.klipper_estimate;
+        statistics.filament_stats              = result.print_statistics.volumes_per_extruder;
+        for (const auto &[extruder_id, volume] : result.print_statistics.volumes_per_extruder) {
+            if (extruder_id >= result.filament_diameters.size())
+                continue;
+            const double weight = volume * result.filament_densities[extruder_id] * 0.001;
+            statistics.total_extruded_volume += volume;
+            statistics.total_used_filament   += volume / (PI * sqr(0.5 * result.filament_diameters[extruder_id]));
+            statistics.total_weight          += weight;
+            statistics.total_cost            += weight * result.filament_cost[extruder_id] * 0.001;
+            statistics.printing_extruders.emplace_back(static_cast<unsigned int>(extruder_id));
+        }
+    }
     p->gcode_results[s_multiple_beds.get_active_bed()] = processor.extract_result();
-    p->external_gcode = priv::ExternalGCode{ path, filename };
+    p->external_gcode = priv::ExternalGCode{ path, filename, std::move(statistics) };
 
-    p->sidebar->show_sliced_info_sizer(false);
+    p->sidebar->show_sliced_info_sizer(true);
     p->preview->reload_print();
     p->preview->get_canvas3d()->zoom_to_gcode();
     p->object_list_changed();
@@ -6143,6 +6173,11 @@ void Plater::load_external_gcode(const std::string &gcode, const std::string &fi
 bool Plater::has_external_gcode() const
 {
     return p->external_gcode.has_value();
+}
+
+const PrintStatistics* Plater::external_gcode_statistics() const
+{
+    return p->external_gcode ? &p->external_gcode->statistics : nullptr;
 }
 
 void Plater::export_external_gcode(bool prefer_removable)

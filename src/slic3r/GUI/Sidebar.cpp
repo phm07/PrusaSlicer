@@ -1265,7 +1265,8 @@ void Sidebar::update_sliced_info_sizer()
         }
         else
         {
-            const PrintStatistics& ps = m_plater->active_fff_print().print_statistics();
+            const PrintStatistics* external_ps = m_plater->external_gcode_statistics();
+            const PrintStatistics& ps = external_ps != nullptr ? *external_ps : m_plater->active_fff_print().print_statistics();
             const bool is_wipe_tower  = ps.total_wipe_tower_filament > 0;
             const bool is_flush       = ps.total_flush_filament > 0;
 

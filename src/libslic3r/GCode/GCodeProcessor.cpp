@@ -1039,6 +1039,11 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
     if (use_volumetric_e != nullptr)
         m_use_volumetric_e = use_volumetric_e->value;
 
+    // Used by post_process_file().
+    const ConfigOptionBool* remaining_times = config.option<ConfigOptionBool>("remaining_times");
+    if (remaining_times != nullptr)
+        m_time_processor.export_remaining_time_enabled = remaining_times->value;
+
     const ConfigOptionFloatOrPercent* first_layer_height = config.option<ConfigOptionFloatOrPercent>("first_layer_height");
     if (first_layer_height != nullptr)
         m_first_layer_height = std::abs(first_layer_height->value);
@@ -1396,6 +1401,21 @@ void GCodeProcessor::process_binary_file(const std::string& filename, GCodeReade
 
     // Don't post-process the G-code to update time stamps.
     this->finalize(false);
+}
+
+void GCodeProcessor::post_process_file(const std::string& klipper_estimator_limits)
+{
+    if (m_result.is_binary_file)
+        throw Slic3r::RuntimeError("Post-processing of a binary G-code is not supported.");
+
+    CNumericLocalesSetter locales_setter;
+    // The G-code was loaded as ASCII, keep it even if its config asks for a binary G-code.
+    m_binarizer.set_enabled(false);
+    m_klipper_limits = KlipperEstimator::PrinterLimits::deserialize(klipper_estimator_limits);
+    // The time was calculated by process_file() already, see finalize().
+    post_process();
+    if (m_klipper_limits)
+        apply_klipper_time_estimate();
 }
 
 void GCodeProcessor::initialize(const std::string& filename)
@@ -3874,7 +3894,8 @@ void GCodeProcessor::post_process()
         filament_total_cost += filament_cost[id];
     }
 
-    double total_g_wipe_tower = m_print->print_statistics().total_wipe_tower_filament_weight;
+    // No Print for a G-code post-processed by post_process_file().
+    const double total_g_wipe_tower = m_print != nullptr ? m_print->print_statistics().total_wipe_tower_filament_weight : 0.;
 
     if (m_binarizer.is_enabled()) {
         // update print metadata
@@ -3888,7 +3909,7 @@ void GCodeProcessor::post_process()
             return ret;
         };
 
-        const int total_toolchanges = m_print->print_statistics().total_toolchanges;
+        const int total_toolchanges = m_print != nullptr ? m_print->print_statistics().total_toolchanges : 0;
 
         // update binary data
         bgcode::binarize::BinaryData& binary_data = m_binarizer.get_binary_data();
