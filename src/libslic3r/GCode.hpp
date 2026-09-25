@@ -519,6 +519,10 @@ std::vector<const PrintInstance*> sort_object_instances_by_model_order(const Pri
 // Returns true if one of the temp commands are found, and try to parse the target temperature value into temp_out.
 bool custom_gcode_sets_temperature(const std::string &gcode, const int mcode_set_temp_dont_wait, const int mcode_set_temp_and_wait, const bool include_g10, int &temp_out);
 
+// Emit the per-filament pressure advance value if it is set and the firmware supports it.
+// Must be called after the toolchange, as the command applies to the active extruder.
+std::string set_pressure_advance(const PrintConfig &config, const unsigned int extruder_id);
+
 }
 
 #endif

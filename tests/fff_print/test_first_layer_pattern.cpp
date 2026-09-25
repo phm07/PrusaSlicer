@@ -243,6 +243,33 @@ TEST_CASE("First layer pattern: print settings", "[FirstLayerPattern]")
         CHECK(retractions == 1 + 8 + 1);
     }
 
+    SECTION("Filament pressure advance") {
+        config.set_deserialize_strict({
+            { "gcode_flavor", "klipper" },
+            { "filament_pressure_advance", "0.045" },
+            { "start_filament_gcode", "START_FILAMENT" },
+        });
+        const std::string gcode = generate_first_layer_pattern(config, params);
+        const size_t      pa    = gcode.find("\nSET_PRESSURE_ADVANCE ADVANCE=0.045\n");
+        REQUIRE(pa != std::string::npos);
+        // Before start_filament_gcode, which can override it, and before the pattern.
+        CHECK(pa < gcode.find("\nSTART_FILAMENT\n"));
+        CHECK(pa < gcode.find(";WIDTH:"));
+        CHECK(gcode.find("SET_PRESSURE_ADVANCE", pa + 2) == std::string::npos);
+
+        SECTION("Not emitted if not set") {
+            config.set_key_value("filament_pressure_advance", new ConfigOptionFloatsNullable{ ConfigOptionFloatsNullable::nil_value() });
+            CHECK(generate_first_layer_pattern(config, params).find("SET_PRESSURE_ADVANCE") == std::string::npos);
+        }
+
+        SECTION("Not emitted for other firmwares") {
+            config.set_deserialize_strict({ { "gcode_flavor", "marlin2" } });
+            const std::string gcode = generate_first_layer_pattern(config, params);
+            CHECK(gcode.find("SET_PRESSURE_ADVANCE") == std::string::npos);
+            CHECK(gcode.find("M900") == std::string::npos);
+        }
+    }
+
     SECTION("Custom G-code") {
         config.set_deserialize_strict({
             { "start_gcode", "START FILE=[input_filename_base] LAYERS=[total_layer_count] MIN={first_layer_print_min[0]}" },

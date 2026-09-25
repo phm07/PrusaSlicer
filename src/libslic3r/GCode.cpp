@@ -3915,9 +3915,7 @@ std::string GCodeGenerator::retract_and_wipe(bool toolchange, bool reset_e)
     return gcode;
 }
 
-// Emit the per-filament pressure advance value if it is set and the firmware supports it.
-// Must be called after the toolchange, as the command applies to the active extruder.
-static std::string set_pressure_advance(const PrintConfig &config, const unsigned int extruder_id)
+std::string set_pressure_advance(const PrintConfig &config, const unsigned int extruder_id)
 {
     if (config.gcode_flavor.value != gcfKlipper || config.filament_pressure_advance.is_nil(extruder_id))
         return {};
