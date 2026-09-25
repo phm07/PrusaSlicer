@@ -41,6 +41,7 @@ add_executable(${_TEST_NAME}_tests
 	test_shells.cpp
 	test_skirt_brim.cpp
 	test_support_material.cpp
+	test_temperature_tower.cpp
 	test_thin_walls.cpp
 	test_trianglemesh.cpp
 	)

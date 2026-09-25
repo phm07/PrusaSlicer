@@ -67,6 +67,7 @@
 #include "PressureAdvanceDialog.hpp"
 #include "ExtrusionMultiplierDialog.hpp"
 #include "FirstLayerDialog.hpp"
+#include "TemperatureTowerDialog.hpp"
 #include "WebViewPanel.hpp"
 #include "UserAccount.hpp"
 
@@ -1766,6 +1767,16 @@ void MainFrame::init_menubar_as_editor()
                 FirstLayerDialog dlg(this);
                 if (dlg.ShowModal() == wxID_OK)
                     m_plater->load_external_gcode(dlg.gcode(), dlg.filename());
+            }, "", nullptr,
+            [this]() { return m_plater->printer_technology() == ptFFF; }, this);
+        append_menu_item(calibrationMenu, wxID_ANY, _L("&Temperature Tower") + dots, _L("Generate and slice a temperature tower with the active presets"),
+            [this](wxCommandEvent&) {
+                TemperatureTowerDialog dlg(this);
+                if (dlg.ShowModal() == wxID_OK && m_plater->load_calibration_model(dlg.model(), _L("Temperature Tower"))) {
+                    // Slice right away, as the Slice now button does.
+                    m_plater->reslice();
+                    m_plater->select_view_3D("Preview");
+                }
             }, "", nullptr,
             [this]() { return m_plater->printer_technology() == ptFFF; }, this);
         append_menu_item(calibrationMenu, wxID_ANY, _L("&Pressure Advance") + dots, _L("Generate a pressure advance calibration pattern for the active presets"),
