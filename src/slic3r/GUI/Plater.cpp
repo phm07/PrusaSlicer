@@ -3394,7 +3394,10 @@ void Plater::priv::set_current_panel(wxPanel* panel)
 
         preview->get_canvas3d()->bind_event_handlers();
 
-        if (wxGetApp().is_editor()) {
+        if (wxGetApp().is_editor() && external_gcode) {
+            // Neither reslice nor reset the toolpaths, they would replace the external G-code shown in the preview.
+            preview->reload_print();
+        } else if (wxGetApp().is_editor()) {
             // see: Plater::priv::object_list_changed()
             bool export_in_progress = this->background_process.is_export_scheduled();
             if (
