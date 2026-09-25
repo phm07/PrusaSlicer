@@ -256,6 +256,9 @@ public:
     // Show G-code generated outside of slicing (a calibration pattern) in the preview. Export G-code and Send to printer
     // act on it until the plate or the configuration changes. filename is the default name for the export / upload.
     void load_external_gcode(const std::string &gcode, const std::string &filename);
+    // Replace the plate with the objects and the custom G-codes of a calibration model, as when loading a project.
+    // Asks to save the current project if it is modified, returns false if canceled.
+    bool load_calibration_model(const Model &model, const wxString &name);
     bool has_external_gcode() const;
     // Statistics of the external G-code shown in the sidebar instead of the ones of the sliced print, nullptr if none is loaded.
     const PrintStatistics* external_gcode_statistics() const;

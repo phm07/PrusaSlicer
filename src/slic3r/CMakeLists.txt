@@ -248,6 +248,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/FirstLayerDialog.hpp
     GUI/PressureAdvanceDialog.cpp
     GUI/PressureAdvanceDialog.hpp
+    GUI/TemperatureTowerDialog.cpp
+    GUI/TemperatureTowerDialog.hpp
     GUI/WifiConfigDialog.cpp
     GUI/WifiConfigDialog.hpp
     GUI/Jobs/Job.hpp

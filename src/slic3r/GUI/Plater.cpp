@@ -6100,6 +6100,24 @@ std::optional<fs::path> Plater::get_multiple_output_dir(const std::string &start
     return output_path;
 }
 
+bool Plater::load_calibration_model(const Model &model, const wxString &name)
+{
+    if (! p->model.objects.empty() && p->save_project_if_dirty(_L("Loading a calibration model while the current project is modified.")) == wxID_CANCEL)
+        return false;
+
+    p->clear_external_gcode();
+    p->select_view_3D("3D");
+    Plater::TakeSnapshot snapshot(this, name, UndoRedo::SnapshotType::ProjectSeparator);
+    p->reset();
+    // The custom G-codes are not a part of the Undo / Redo stack, as for a loaded project.
+    p->model.custom_gcode_per_print_z() = model.custom_gcode_per_print_z();
+    p->load_model_objects(model.objects);
+    // Apply the new plate to the print now instead of waiting for the background process timer,
+    // otherwise the bed is still reported as empty and a reslice() right after this call does nothing.
+    p->update_restart_background_process(false, false);
+    return true;
+}
+
 void Plater::load_external_gcode(const std::string &gcode, const std::string &filename)
 {
     p->clear_external_gcode();

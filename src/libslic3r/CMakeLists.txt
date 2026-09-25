@@ -389,6 +389,8 @@ set(SLIC3R_SOURCES
     SVG.cpp
     SVG.hpp
     Technologies.hpp
+    TemperatureTower.cpp
+    TemperatureTower.hpp
     Tesselate.cpp
     Tesselate.hpp
     TextConfiguration.hpp
