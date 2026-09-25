@@ -555,6 +555,9 @@ std::string CalibrationPatternGenerator::generate()
     filament_gcode_config.set_key_value("layer_z", new ConfigOptionFloat(m_first_layer_height));
     filament_gcode_config.set_key_value("max_layer_z", new ConfigOptionFloat(0.));
     filament_gcode_config.set_key_value("filament_extruder_id", new ConfigOptionInt(0));
+    // The filament's pressure advance, before start_filament_gcode so that it can still be overridden there,
+    // the same way as GCodeGenerator::set_extruder() does.
+    m_gcode += set_pressure_advance(m_config, 0);
     m_gcode += this->process_template("start_filament_gcode", m_config.start_filament_gcode.get_at(0), &filament_gcode_config);
     if (const double acceleration = this->acceleration(); acceleration > 0.)
         m_gcode += m_writer.set_print_acceleration(static_cast<unsigned int>(std::round(acceleration)));
