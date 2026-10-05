@@ -274,6 +274,8 @@ set(SLIC3R_SOURCES
     "${CMAKE_CURRENT_BINARY_DIR}/libslic3r_version.h"
     Line.cpp
     Line.hpp
+    MaxFlowPattern.cpp
+    MaxFlowPattern.hpp
     BlacklistedLibraryCheck.cpp
     BlacklistedLibraryCheck.hpp
     CutUtils.cpp

@@ -105,7 +105,9 @@ protected:
     double     extrusion_width(const char *opt_key, FlowRole role, bool first_layer, double height) const;
     // Print speed from the print preset including the volumetric speed limits, see GCodeGenerator::_extrude().
     double     print_speed(SquareRole role, bool first_layer, double width, double height) const;
-    // Acceleration from the print preset, nothing is emitted if default_acceleration is zero.
+    // Acceleration from the print preset, zero if default_acceleration is zero.
+    double     print_acceleration(SquareRole role, bool first_layer) const;
+    // Emits print_acceleration(), nothing is emitted if default_acceleration is zero.
     void       set_acceleration(SquareRole role, bool first_layer);
     // Rectangular loops of a square with the given bottom left corner, from the innermost one out,
     // the external perimeter last, as PrusaSlicer does by default.
