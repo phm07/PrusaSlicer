@@ -68,6 +68,7 @@
 #include "ExtrusionMultiplierDialog.hpp"
 #include "FirstLayerDialog.hpp"
 #include "TemperatureTowerDialog.hpp"
+#include "MaxFlowDialog.hpp"
 #include "WebViewPanel.hpp"
 #include "UserAccount.hpp"
 
@@ -1789,6 +1790,13 @@ void MainFrame::init_menubar_as_editor()
         append_menu_item(calibrationMenu, wxID_ANY, _L("&Extrusion Multiplier") + dots, _L("Generate an extrusion multiplier calibration pattern for the active presets"),
             [this](wxCommandEvent&) {
                 ExtrusionMultiplierDialog dlg(this);
+                if (dlg.ShowModal() == wxID_OK)
+                    m_plater->load_external_gcode(dlg.gcode(), dlg.filename());
+            }, "", nullptr,
+            [this]() { return m_plater->printer_technology() == ptFFF; }, this);
+        append_menu_item(calibrationMenu, wxID_ANY, _L("&Max Volumetric Flow") + dots, _L("Generate a maximum volumetric flow calibration tower for the active presets"),
+            [this](wxCommandEvent&) {
+                MaxFlowDialog dlg(this);
                 if (dlg.ShowModal() == wxID_OK)
                     m_plater->load_external_gcode(dlg.gcode(), dlg.filename());
             }, "", nullptr,

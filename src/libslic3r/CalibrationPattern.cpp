@@ -163,11 +163,11 @@ double CalibrationPatternGenerator::print_speed(SquareRole role, bool first_laye
     return speed;
 }
 
-void CalibrationPatternGenerator::set_acceleration(SquareRole role, bool first_layer)
+double CalibrationPatternGenerator::print_acceleration(SquareRole role, bool first_layer) const
 {
     const PrintConfig &c = m_config;
     if (c.default_acceleration.value <= 0.)
-        return;
+        return 0.;
     const bool infill    = role == SquareRole::SolidInfill || role == SquareRole::TopSolidInfill;
     const bool perimeter = role == SquareRole::ExternalPerimeter || role == SquareRole::Perimeter;
     double acceleration = c.default_acceleration.value;
@@ -183,7 +183,13 @@ void CalibrationPatternGenerator::set_acceleration(SquareRole role, bool first_l
         acceleration = c.external_perimeter_acceleration.value;
     else if (perimeter && c.perimeter_acceleration.value > 0.)
         acceleration = c.perimeter_acceleration.value;
-    m_gcode += m_writer.set_print_acceleration(static_cast<unsigned int>(std::floor(acceleration + 0.5)));
+    return acceleration;
+}
+
+void CalibrationPatternGenerator::set_acceleration(SquareRole role, bool first_layer)
+{
+    if (const double acceleration = this->print_acceleration(role, first_layer); acceleration > 0.)
+        m_gcode += m_writer.set_print_acceleration(static_cast<unsigned int>(std::floor(acceleration + 0.5)));
 }
 
 void CalibrationPatternGenerator::draw_square_perimeters(const Vec2d &origin, double size, const SquareFlow &flow, bool first_layer, double flow_ratio)
